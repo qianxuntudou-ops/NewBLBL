@@ -2,6 +2,8 @@ package blbl.cat3399.feature.dynamic
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.FocusFinder
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -73,6 +75,32 @@ class DynamicFragment : Fragment() {
         }
         binding.recyclerDynamic.adapter = videoAdapter
         (binding.recyclerDynamic.itemAnimator as? androidx.recyclerview.widget.SimpleItemAnimator)?.supportsChangeAnimations = false
+        binding.recyclerDynamic.addOnChildAttachStateChangeListener(
+            object : RecyclerView.OnChildAttachStateChangeListener {
+                override fun onChildViewAttachedToWindow(view: View) {
+                    view.setOnKeyListener { v, keyCode, event ->
+                        if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                val itemView = binding.recyclerDynamic.findContainingItemView(v) ?: return@setOnKeyListener false
+                                val next = FocusFinder.getInstance().findNextFocus(binding.recyclerDynamic, itemView, View.FOCUS_DOWN)
+                                if (next == null || !isDescendantOf(next, binding.recyclerDynamic)) {
+                                    loadMoreFeed()
+                                    return@setOnKeyListener true
+                                }
+                                false
+                            }
+
+                            else -> false
+                        }
+                    }
+                }
+
+                override fun onChildViewDetachedFromWindow(view: View) {
+                    view.setOnKeyListener(null)
+                }
+            },
+        )
         binding.recyclerDynamic.addOnScrollListener(
             object : RecyclerView.OnScrollListener() {
                 private val tmp = IntArray(8)
@@ -191,6 +219,15 @@ class DynamicFragment : Fragment() {
             widthDp >= 800 -> 3
             else -> 2
         }
+    }
+
+    private fun isDescendantOf(view: View, ancestor: View): Boolean {
+        var current: View? = view
+        while (current != null) {
+            if (current == ancestor) return true
+            current = current.parent as? View
+        }
+        return false
     }
 
     override fun onDestroyView() {
