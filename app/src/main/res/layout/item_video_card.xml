@@ -103,6 +103,7 @@
             android:layout_height="wrap_content"
             android:layout_margin="8dp"
             android:ellipsize="end"
+            android:lines="2"
             android:maxLines="2"
             android:textColor="@color/blbl_text"
             android:textSize="14sp"

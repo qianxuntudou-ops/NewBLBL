@@ -5,6 +5,7 @@ import blbl.cat3399.core.model.Danmaku
 import blbl.cat3399.core.model.Following
 import blbl.cat3399.core.model.VideoCard
 import blbl.cat3399.core.net.BiliClient
+import blbl.cat3399.core.net.WebCookieMaintainer
 import blbl.cat3399.proto.dm.DmSegMobileReply
 import blbl.cat3399.proto.dmview.DmWebViewReply
 import kotlinx.coroutines.Dispatchers
@@ -227,6 +228,7 @@ object BiliApi {
     }
 
     suspend fun playUrlDash(bvid: String, cid: Long, qn: Int = 80, fnval: Int = 16): JSONObject {
+        WebCookieMaintainer.ensureHealthyForPlay()
         val keys = BiliClient.ensureWbiKeys()
         val hasSessData = BiliClient.cookies.hasSessData()
         val params =
@@ -249,7 +251,20 @@ object BiliApi {
         }
         genPlayUrlSession()?.let { params["session"] = it }
         return try {
-            requestPlayUrl(path = "/x/player/wbi/playurl", params = params, keys = keys)
+            val json = requestPlayUrl(path = "/x/player/wbi/playurl", params = params, keys = keys)
+            if (hasSessData && hasVVoucher(json)) {
+                val fallback = params.toMutableMap()
+                fallback["try_look"] = "1"
+                fallback.remove("gaia_source")
+                fallback.remove("session")
+                val retry = requestPlayUrl(path = "/x/player/wbi/playurl", params = fallback, keys = keys, noCookies = true)
+                retry.put("__blbl_risk_control_bypassed", true)
+                retry.put("__blbl_risk_control_code", -352)
+                retry.put("__blbl_risk_control_message", "v_voucher detected")
+                retry
+            } else {
+                json
+            }
         } catch (e: BiliApiException) {
             if (hasSessData && isRiskControl(e)) {
                 val fallback = params.toMutableMap()
@@ -571,9 +586,14 @@ object BiliApi {
     }
 
     private fun isRiskControl(e: BiliApiException): Boolean {
-        if (e.apiCode == -412) return true
+        if (e.apiCode == -412 || e.apiCode == -352) return true
         val m = e.apiMessage
         return m.contains("风控") || m.contains("拦截") || m.contains("风险")
+    }
+
+    private fun hasVVoucher(json: JSONObject): Boolean {
+        val data = json.optJSONObject("data") ?: return false
+        return data.optString("v_voucher", "").isNotBlank()
     }
 
     private fun md5Hex(s: String): String {

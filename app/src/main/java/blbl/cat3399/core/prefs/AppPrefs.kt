@@ -6,6 +6,18 @@ import org.json.JSONArray
 class AppPrefs(context: Context) {
     private val prefs = context.getSharedPreferences("blbl_prefs", Context.MODE_PRIVATE)
 
+    var webRefreshToken: String?
+        get() = prefs.getString(KEY_WEB_REFRESH_TOKEN, null)?.trim()?.takeIf { it.isNotBlank() }
+        set(value) = prefs.edit().putString(KEY_WEB_REFRESH_TOKEN, value?.trim()).apply()
+
+    var webCookieRefreshCheckedEpochDay: Long
+        get() = prefs.getLong(KEY_WEB_COOKIE_REFRESH_CHECKED_EPOCH_DAY, -1L)
+        set(value) = prefs.edit().putLong(KEY_WEB_COOKIE_REFRESH_CHECKED_EPOCH_DAY, value).apply()
+
+    var biliTicketCheckedEpochDay: Long
+        get() = prefs.getLong(KEY_BILI_TICKET_CHECKED_EPOCH_DAY, -1L)
+        set(value) = prefs.edit().putLong(KEY_BILI_TICKET_CHECKED_EPOCH_DAY, value).apply()
+
     var uiMode: String
         get() = prefs.getString(KEY_UI_MODE, UI_MODE_AUTO) ?: UI_MODE_AUTO
         set(value) = prefs.edit().putString(KEY_UI_MODE, value).apply()
@@ -102,6 +114,10 @@ class AppPrefs(context: Context) {
         get() = prefs.getBoolean(KEY_PLAYER_DEBUG, false)
         set(value) = prefs.edit().putBoolean(KEY_PLAYER_DEBUG, value).apply()
 
+    var playerDoubleBackOnEnded: Boolean
+        get() = prefs.getBoolean(KEY_PLAYER_DOUBLE_BACK_ON_ENDED, true)
+        set(value) = prefs.edit().putBoolean(KEY_PLAYER_DOUBLE_BACK_ON_ENDED, value).apply()
+
     var gridSpanCount: Int
         get() = prefs.getInt(KEY_GRID_SPAN, 0) // 0 => auto
         set(value) = prefs.edit().putInt(KEY_GRID_SPAN, value).apply()
@@ -159,6 +175,10 @@ class AppPrefs(context: Context) {
         const val UI_MODE_TV = "tv"
         const val UI_MODE_NORMAL = "normal"
 
+        private const val KEY_WEB_REFRESH_TOKEN = "web_refresh_token"
+        private const val KEY_WEB_COOKIE_REFRESH_CHECKED_EPOCH_DAY = "web_cookie_refresh_checked_epoch_day"
+        private const val KEY_BILI_TICKET_CHECKED_EPOCH_DAY = "bili_ticket_checked_epoch_day"
+
         private const val KEY_UA = "ua"
         private const val KEY_UI_MODE = "ui_mode"
         private const val KEY_IMAGE_QUALITY = "image_quality"
@@ -183,6 +203,7 @@ class AppPrefs(context: Context) {
         private const val KEY_PLAYER_SPEED = "player_speed"
         private const val KEY_FULLSCREEN = "fullscreen_enabled"
         private const val KEY_PLAYER_DEBUG = "player_debug_enabled"
+        private const val KEY_PLAYER_DOUBLE_BACK_ON_ENDED = "player_double_back_on_ended"
         private const val KEY_GRID_SPAN = "grid_span"
         private const val KEY_DYNAMIC_GRID_SPAN = "dynamic_grid_span"
         private const val KEY_SEARCH_HISTORY = "search_history"

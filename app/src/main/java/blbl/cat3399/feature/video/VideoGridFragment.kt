@@ -3,7 +3,9 @@ package blbl.cat3399.feature.video
 import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.FocusFinder
 import android.view.LayoutInflater
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
@@ -15,6 +17,7 @@ import blbl.cat3399.core.api.BiliApi
 import blbl.cat3399.core.log.AppLog
 import blbl.cat3399.databinding.FragmentVideoGridBinding
 import blbl.cat3399.feature.player.PlayerActivity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 class VideoGridFragment : Fragment() {
@@ -80,6 +83,49 @@ class VideoGridFragment : Fragment() {
                         AppLog.d("VideoGrid", "near end source=$source rid=$rid t=${SystemClock.uptimeMillis()}")
                         loadNextPage()
                     }
+                }
+            },
+        )
+        binding.recycler.addOnChildAttachStateChangeListener(
+            object : RecyclerView.OnChildAttachStateChangeListener {
+                override fun onChildViewAttachedToWindow(view: View) {
+                    view.setOnKeyListener { v, keyCode, event ->
+                        if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP -> {
+                                if (!binding.recycler.canScrollVertically(-1)) {
+                                    val lm = binding.recycler.layoutManager as? StaggeredGridLayoutManager ?: return@setOnKeyListener false
+                                    val holder = binding.recycler.findContainingViewHolder(v) ?: return@setOnKeyListener false
+                                    val pos =
+                                        holder.bindingAdapterPosition
+                                            .takeIf { it != RecyclerView.NO_POSITION }
+                                            ?: return@setOnKeyListener false
+                                    val first = IntArray(lm.spanCount)
+                                    lm.findFirstVisibleItemPositions(first)
+                                    if (first.any { it == pos }) {
+                                        focusSelectedTabIfAvailable()
+                                        return@setOnKeyListener true
+                                    }
+                                }
+                                false
+                            }
+
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                val itemView = binding.recycler.findContainingItemView(v) ?: return@setOnKeyListener false
+                                val next = FocusFinder.getInstance().findNextFocus(binding.recycler, itemView, View.FOCUS_RIGHT)
+                                if (next == null || !isDescendantOf(next, binding.recycler)) {
+                                    if (switchToNextTabIfAvailable()) return@setOnKeyListener true
+                                }
+                                false
+                            }
+
+                            else -> false
+                        }
+                    }
+                }
+
+                override fun onChildViewDetachedFromWindow(view: View) {
+                    view.setOnKeyListener(null)
                 }
             },
         )
@@ -164,6 +210,9 @@ class VideoGridFragment : Fragment() {
                 } else {
                     adapter.append(filtered)
                 }
+                binding.recycler.post {
+                    (binding.recycler.layoutManager as? StaggeredGridLayoutManager)?.invalidateSpanAssignments()
+                }
 
                 if (source == SRC_RECOMMEND) {
                     recommendFetchRow += cards.size
@@ -179,6 +228,7 @@ class VideoGridFragment : Fragment() {
                     "load ok source=$source rid=$rid page=${page - 1} add=${filtered.size} total=${adapter.itemCount} cost=${SystemClock.uptimeMillis() - startAt}ms",
                 )
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 AppLog.e("VideoGrid", "load failed source=$source rid=$rid page=$page", t)
                 Toast.makeText(requireContext(), "加载失败，可查看 Logcat(标签 BLBL)", Toast.LENGTH_SHORT).show()
             } finally {
@@ -202,6 +252,36 @@ class VideoGridFragment : Fragment() {
             widthDp >= 800 -> 3
             else -> 2
         }
+    }
+
+    private fun focusSelectedTabIfAvailable(): Boolean {
+        val parentView = parentFragment?.view ?: return false
+        val tabLayout = parentView.findViewById<com.google.android.material.tabs.TabLayout?>(blbl.cat3399.R.id.tab_layout) ?: return false
+        val tabStrip = tabLayout.getChildAt(0) as? ViewGroup ?: return false
+        val pos = tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
+        tabStrip.getChildAt(pos)?.requestFocus() ?: return false
+        return true
+    }
+
+    private fun isDescendantOf(view: View, ancestor: View): Boolean {
+        var current: View? = view
+        while (current != null) {
+            if (current == ancestor) return true
+            current = current.parent as? View
+        }
+        return false
+    }
+
+    private fun switchToNextTabIfAvailable(): Boolean {
+        val parentView = parentFragment?.view ?: return false
+        val tabLayout = parentView.findViewById<com.google.android.material.tabs.TabLayout?>(blbl.cat3399.R.id.tab_layout) ?: return false
+        if (tabLayout.tabCount <= 1) return false
+        val tabStrip = tabLayout.getChildAt(0) as? ViewGroup ?: return false
+        val cur = tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
+        val next = (cur + 1) % tabLayout.tabCount
+        tabLayout.getTabAt(next)?.select() ?: return false
+        tabLayout.post { tabStrip.getChildAt(next)?.requestFocus() }
+        return true
     }
 
     override fun onDestroyView() {

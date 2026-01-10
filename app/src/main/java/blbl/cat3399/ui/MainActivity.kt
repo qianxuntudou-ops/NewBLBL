@@ -3,11 +3,14 @@ package blbl.cat3399.ui
 import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
+import android.content.DialogInterface
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -26,6 +29,7 @@ import blbl.cat3399.feature.home.HomeFragment
 import blbl.cat3399.feature.login.QrLoginActivity
 import blbl.cat3399.feature.search.SearchFragment
 import blbl.cat3399.feature.settings.SettingsActivity
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.launch
 import java.lang.ref.WeakReference
 
@@ -37,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private var pausedFocusedView: WeakReference<View>? = null
     private var pausedFocusWasInMain: Boolean = false
     private var focusListener: ViewTreeObserver.OnGlobalFocusChangeListener? = null
+    private var exitDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,6 +97,19 @@ class MainActivity : AppCompatActivity() {
                 }
             }.also { binding.root.viewTreeObserver.addOnGlobalFocusChangeListener(it) }
 
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    val current = supportFragmentManager.findFragmentById(R.id.main_container)
+                    val handled = (current as? SearchFragment)?.handleBackPressed() == true
+                    AppLog.d("Back", "back current=${current?.javaClass?.simpleName} handled=$handled")
+                    if (handled) return
+                    showExitConfirm()
+                }
+            },
+        )
+
         refreshSidebarUser()
     }
 
@@ -143,6 +161,9 @@ class MainActivity : AppCompatActivity() {
 
                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
                     if (focused != null && isInSidebar(focused)) {
+                        if (focused == binding.ivSidebarUser || focused == binding.btnSidebarLogin) {
+                            if (focusSelectedTabInCurrentFragment()) return true
+                        }
                         focusMainFromSidebar()
                         return true
                     }
@@ -174,6 +195,23 @@ class MainActivity : AppCompatActivity() {
         startActivity(Intent(this, QrLoginActivity::class.java))
     }
 
+    private fun showExitConfirm() {
+        if (exitDialog?.isShowing == true) return
+        val dialog =
+            MaterialAlertDialogBuilder(this)
+                .setTitle("退出")
+                .setMessage("确定要退出吗？")
+                .setNegativeButton("否", null)
+                .setPositiveButton("退出") { _, _ -> finish() }
+                .create()
+        dialog.setOnDismissListener { exitDialog = null }
+        dialog.setOnShowListener {
+            dialog.getButton(DialogInterface.BUTTON_NEGATIVE)?.requestFocus()
+        }
+        dialog.show()
+        exitDialog = dialog
+    }
+
     private fun refreshSidebarUser() {
         val hasCookie = BiliClient.cookies.hasSessData()
         if (!hasCookie) {
@@ -196,12 +234,19 @@ class MainActivity : AppCompatActivity() {
     private fun showLoggedIn(avatarUrl: String?) {
         binding.btnSidebarLogin.visibility = android.view.View.GONE
         binding.ivSidebarUser.visibility = android.view.View.VISIBLE
-        blbl.cat3399.core.image.ImageLoader.loadInto(binding.ivSidebarUser, avatarUrl)
+        val normalizedUrl = blbl.cat3399.core.image.ImageUrl.avatar(avatarUrl)
+        blbl.cat3399.core.image.ImageLoader.loadInto(binding.ivSidebarUser, normalizedUrl)
+        if (binding.btnSidebarLogin.isFocused) {
+            binding.ivSidebarUser.requestFocus()
+        }
     }
 
     private fun showLoggedOut() {
         binding.ivSidebarUser.visibility = android.view.View.GONE
         binding.btnSidebarLogin.visibility = android.view.View.VISIBLE
+        if (binding.ivSidebarUser.isFocused) {
+            binding.btnSidebarLogin.requestFocus()
+        }
     }
 
     private fun applyUiMode() {
@@ -335,7 +380,7 @@ class MainActivity : AppCompatActivity() {
 
         val recycler =
             fragmentView.findViewById<RecyclerView?>(R.id.recycler_dynamic)
-                ?: fragmentView.findViewById(R.id.recycler)
+                ?: fragmentView.findViewById<RecyclerView?>(R.id.recycler)
 
         if (recycler != null) {
             recycler.post {
@@ -360,7 +405,22 @@ class MainActivity : AppCompatActivity() {
             return true
         }
 
+        val dynamicLoginBtn = fragmentView.findViewById<View?>(R.id.btn_login)
+        if (dynamicLoginBtn != null && dynamicLoginBtn.isShown && dynamicLoginBtn.isFocusable) {
+            dynamicLoginBtn.requestFocus()
+            return true
+        }
+
         fragmentView.requestFocus()
+        return true
+    }
+
+    private fun focusSelectedTabInCurrentFragment(): Boolean {
+        val fragmentView = supportFragmentManager.findFragmentById(R.id.main_container)?.view ?: return false
+        val tabLayout = fragmentView.findViewById<com.google.android.material.tabs.TabLayout?>(R.id.tab_layout) ?: return false
+        val tabStrip = tabLayout.getChildAt(0) as? ViewGroup ?: return false
+        val pos = tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
+        tabLayout.post { tabStrip.getChildAt(pos)?.requestFocus() }
         return true
     }
 

@@ -59,6 +59,7 @@ class PlayerActivity : AppCompatActivity() {
     private var controlsVisible: Boolean = false
     private var lastInteractionAtMs: Long = 0L
     private var lastBackAtMs: Long = 0L
+    private var finishOnBackKeyUp: Boolean = false
     private var holdPrevSpeed: Float = 1.0f
     private var holdPrevPlayWhenReady: Boolean = false
 
@@ -231,7 +232,13 @@ class PlayerActivity : AppCompatActivity() {
         val keyCode = event.keyCode
 
         if (event.action == KeyEvent.ACTION_UP) {
-            if (keyCode == KeyEvent.KEYCODE_BACK) return true
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                if (finishOnBackKeyUp) {
+                    finishOnBackKeyUp = false
+                    finish()
+                }
+                return true
+            }
             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
                 if (holdSeekJob != null) {
                     stopHoldSeek()
@@ -254,6 +261,7 @@ class PlayerActivity : AppCompatActivity() {
             }
 
             KeyEvent.KEYCODE_BACK -> {
+                finishOnBackKeyUp = false
                 if (binding.settingsPanel.visibility == View.VISIBLE) {
                     binding.settingsPanel.visibility = View.GONE
                     setControlsVisible(true)
@@ -264,7 +272,8 @@ class PlayerActivity : AppCompatActivity() {
                     setControlsVisible(false)
                     return true
                 }
-                return handleBackExitOrDismiss()
+                finishOnBackKeyUp = shouldFinishOnBackPress()
+                return true
             }
 
             KeyEvent.KEYCODE_DPAD_UP -> {
@@ -565,25 +574,21 @@ class PlayerActivity : AppCompatActivity() {
         binding.seekProgress.post { binding.seekProgress.requestFocus() }
     }
 
-    private fun handleBackExitOrDismiss(): Boolean {
+    private fun shouldFinishOnBackPress(): Boolean {
         val exo = player
         if (exo != null &&
             exo.playbackState == Player.STATE_ENDED &&
             !BiliClient.prefs.playerDoubleBackOnEnded
         ) {
-            finish()
             return true
         }
         val now = SystemClock.uptimeMillis()
         val isSecond = now - lastBackAtMs <= BACK_DOUBLE_PRESS_WINDOW_MS
-        if (isSecond) {
-            finish()
-            return true
-        }
+        if (isSecond) return true
         lastBackAtMs = now
         Toast.makeText(this, "再按一次退出播放器", Toast.LENGTH_SHORT).show()
         if (controlsVisible) setControlsVisible(false)
-        return true
+        return false
     }
 
     private fun smartSeek(direction: Int) {
@@ -1057,7 +1062,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun isRiskControl(e: BiliApiException): Boolean {
-        if (e.apiCode == -412) return true
+        if (e.apiCode == -412 || e.apiCode == -352) return true
         val m = e.apiMessage
         return m.contains("风控") || m.contains("拦截") || m.contains("风险")
     }

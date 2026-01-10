@@ -6,9 +6,12 @@ import blbl.cat3399.core.prefs.AppPrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.CookieJar
+import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
@@ -93,15 +96,43 @@ object BiliClient {
             .let { if (noCookies) apiOkHttpNoCookies else apiOkHttp }
     }
 
-    suspend fun getJson(url: String, headers: Map<String, String> = emptyMap(), noCookies: Boolean = false): JSONObject {
+    suspend fun requestString(
+        url: String,
+        method: String = "GET",
+        headers: Map<String, String> = emptyMap(),
+        body: RequestBody? = null,
+        noCookies: Boolean = false,
+    ): String {
         val reqBuilder = Request.Builder().url(url)
         for ((k, v) in headers) reqBuilder.header(k, v)
+        when (method.uppercase()) {
+            "GET" -> reqBuilder.get()
+            "POST" -> reqBuilder.post(body ?: ByteArray(0).toRequestBody(null))
+            else -> error("Unsupported method: $method")
+        }
         val res = clientFor(url, noCookies = noCookies).newCall(reqBuilder.build()).await()
         res.use { r ->
-            val body = withContext(Dispatchers.IO) { r.body?.string() ?: "" }
-            if (!r.isSuccessful) throw IOException("HTTP ${r.code} ${r.message} body=${body.take(200)}")
-            return withContext(Dispatchers.Default) { JSONObject(body) }
+            val raw = withContext(Dispatchers.IO) { r.body?.string() ?: "" }
+            if (!r.isSuccessful) throw IOException("HTTP ${r.code} ${r.message} body=${raw.take(200)}")
+            return raw
         }
+    }
+
+    suspend fun getJson(url: String, headers: Map<String, String> = emptyMap(), noCookies: Boolean = false): JSONObject {
+        val body = requestString(url, method = "GET", headers = headers, noCookies = noCookies)
+        return withContext(Dispatchers.Default) { JSONObject(body) }
+    }
+
+    suspend fun postFormJson(
+        url: String,
+        form: Map<String, String>,
+        headers: Map<String, String> = emptyMap(),
+        noCookies: Boolean = false,
+    ): JSONObject {
+        val builder = FormBody.Builder()
+        for ((k, v) in form) builder.add(k, v)
+        val body = requestString(url, method = "POST", headers = headers, body = builder.build(), noCookies = noCookies)
+        return withContext(Dispatchers.Default) { JSONObject(body) }
     }
 
     suspend fun getBytes(url: String, headers: Map<String, String> = emptyMap(), noCookies: Boolean = false): ByteArray {

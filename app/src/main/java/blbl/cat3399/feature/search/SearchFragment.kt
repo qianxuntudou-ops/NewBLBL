@@ -9,7 +9,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
-import androidx.activity.OnBackPressedCallback
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
@@ -40,7 +39,6 @@ class SearchFragment : Fragment() {
     private var history: List<String> = emptyList()
 
     private var suggestJob: Job? = null
-    private var backCallback: OnBackPressedCallback? = null
 
     private var currentTabIndex: Int = 0
     private var currentOrder: Order = Order.TotalRank
@@ -62,23 +60,21 @@ class SearchFragment : Fragment() {
         setupResults()
         loadHotAndDefault()
 
-        backCallback =
-            object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() {
-                    if (binding.panelResults.visibility == View.VISIBLE) {
-                        showInput()
-                        focusFirstKey()
-                        return
-                    }
-                    isEnabled = false
-                    requireActivity().onBackPressedDispatcher.onBackPressed()
-                }
-            }.also { requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, it) }
-
         if (savedInstanceState == null) {
             showInput()
             focusFirstKey()
         }
+    }
+
+    fun handleBackPressed(): Boolean {
+        val b = _binding ?: return false
+        val resultsVisible = b.panelResults.visibility == View.VISIBLE
+        AppLog.d("Back", "SearchFragment handleBackPressed resultsVisible=$resultsVisible")
+        if (!resultsVisible) return false
+        b.panelResults.visibility = View.GONE
+        b.panelInput.visibility = View.VISIBLE
+        focusFirstKey()
+        return true
     }
 
     private fun setupInput() {
@@ -336,11 +332,12 @@ class SearchFragment : Fragment() {
     }
 
     private fun focusFirstKey() {
-        binding.recyclerKeys.post {
-            binding.recyclerKeys.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus()
-                ?: binding.recyclerKeys.post {
-                    binding.recyclerKeys.scrollToPosition(0)
-                    binding.recyclerKeys.post { binding.recyclerKeys.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() }
+        val b = _binding ?: return
+        b.recyclerKeys.post {
+            b.recyclerKeys.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus()
+                ?: b.recyclerKeys.post {
+                    b.recyclerKeys.scrollToPosition(0)
+                    b.recyclerKeys.post { b.recyclerKeys.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() }
                 }
         }
     }
@@ -479,7 +476,6 @@ class SearchFragment : Fragment() {
     override fun onDestroyView() {
         suggestJob?.cancel()
         suggestJob = null
-        backCallback = null
         _binding = null
         super.onDestroyView()
     }

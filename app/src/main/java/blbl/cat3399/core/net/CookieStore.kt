@@ -52,6 +52,32 @@ class CookieStore(
         return store.values.flatten().firstOrNull { it.name == name && it.expiresAt >= now }?.value
     }
 
+    fun getCookie(name: String): Cookie? {
+        val now = System.currentTimeMillis()
+        return store.values.flatten().firstOrNull { it.name == name && it.expiresAt >= now }
+    }
+
+    fun upsert(cookie: Cookie) {
+        val key = cookie.domain
+        val list = (store[key] ?: mutableListOf()).toMutableList()
+        list.removeAll { it.name == cookie.name && it.domain == cookie.domain && it.path == cookie.path }
+        list.add(cookie)
+        store[key] = list
+        persistToDisk()
+    }
+
+    fun upsertAll(cookies: List<Cookie>) {
+        if (cookies.isEmpty()) return
+        for (cookie in cookies) {
+            val key = cookie.domain
+            val list = (store[key] ?: mutableListOf()).toMutableList()
+            list.removeAll { it.name == cookie.name && it.domain == cookie.domain && it.path == cookie.path }
+            list.add(cookie)
+            store[key] = list
+        }
+        persistToDisk()
+    }
+
     fun clearAll() {
         store.clear()
         prefs.edit().clear().apply()

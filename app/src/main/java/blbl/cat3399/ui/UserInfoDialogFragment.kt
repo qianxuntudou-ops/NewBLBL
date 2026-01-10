@@ -85,7 +85,8 @@ class UserInfoDialogFragment : DialogFragment() {
 
                 binding.tvName.text = name
                 binding.tvMid.text = getString(R.string.label_uid_fmt, mid.toString())
-                ImageLoader.loadInto(binding.ivAvatar, avatarUrl)
+                val normalizedUrl = blbl.cat3399.core.image.ImageUrl.avatar(avatarUrl)
+                ImageLoader.loadInto(binding.ivAvatar, normalizedUrl)
 
                 binding.tvFollowing.text = (stat?.following ?: 0L).toString()
                 binding.tvFollower.text = (stat?.follower ?: 0L).toString()
@@ -145,4 +146,3 @@ class UserInfoDialogFragment : DialogFragment() {
         }
     }
 }
-

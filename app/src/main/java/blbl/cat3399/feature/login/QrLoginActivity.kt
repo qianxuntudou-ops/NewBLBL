@@ -13,10 +13,12 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.MultiFormatWriter
 import com.google.zxing.common.BitMatrix
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 class QrLoginActivity : AppCompatActivity() {
@@ -73,7 +75,9 @@ class QrLoginActivity : AppCompatActivity() {
                 val url = data.optString("url", "")
                 val key = data.optString("qrcode_key", "")
                 AppLog.i("QrLogin", "generate ok key=${key.take(6)}")
-                binding.ivQr.setImageBitmap(makeQr(url, 500))
+                val qrSizePx = 500
+                val bmp = withContext(Dispatchers.Default) { makeQr(url, qrSizePx) }
+                binding.ivQr.setImageBitmap(bmp)
                 binding.tvStatus.text = "请使用哔哩哔哩 App 扫码并确认登录"
                 pollJob = poll(key)
             } catch (t: Throwable) {
@@ -101,6 +105,14 @@ class QrLoginActivity : AppCompatActivity() {
                         }
 
                         0 -> {
+                            val refreshToken = data.optString("refresh_token", "").trim()
+                            if (refreshToken.isNotBlank()) {
+                                BiliClient.prefs.webRefreshToken = refreshToken
+                            }
+                            val crossDomainUrl = data.optString("url", "").trim()
+                            if (crossDomainUrl.isNotBlank()) {
+                                runCatching { BiliClient.requestString(crossDomainUrl) }
+                            }
                             binding.tvStatus.text = "登录成功，Cookie 已写入（返回上一页）"
                             AppLog.i("QrLogin", "login success sess=${BiliClient.cookies.hasSessData()}")
                             delay(800)

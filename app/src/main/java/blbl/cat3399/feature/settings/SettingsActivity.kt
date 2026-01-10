@@ -6,7 +6,6 @@ import android.text.InputType
 import android.view.KeyEvent
 import android.widget.EditText
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -15,6 +14,7 @@ import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.tv.TvMode
 import blbl.cat3399.core.ui.Immersive
 import blbl.cat3399.databinding.ActivitySettingsBinding
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.util.Locale
 
 class SettingsActivity : AppCompatActivity() {
@@ -145,6 +145,7 @@ class SettingsActivity : AppCompatActivity() {
                 SettingEntry("默认开启字幕", if (prefs.subtitleEnabledDefault) "开" else "关", "进入播放页时默认状态"),
                 SettingEntry("视频编码", prefs.playerPreferredCodec, "AVC/HEVC/AV1"),
                 SettingEntry("显示视频调试信息", if (prefs.playerDebugEnabled) "开" else "关", "播放器左上角调试框"),
+                SettingEntry("播放结束双击返回", if (prefs.playerDoubleBackOnEnded) "开" else "关", "关=播放结束时按一次返回直接退出"),
             )
 
             "弹幕设置" -> listOf(
@@ -440,13 +441,18 @@ class SettingsActivity : AppCompatActivity() {
                 showSection(currentSectionIndex)
             }
 
+            "播放结束双击返回" -> {
+                prefs.playerDoubleBackOnEnded = !prefs.playerDoubleBackOnEnded
+                showSection(currentSectionIndex)
+            }
+
             else -> AppLog.i("Settings", "click ${entry.title}")
         }
     }
 
     private fun showChoiceDialog(title: String, items: List<String>, current: String, onPicked: (String) -> Unit) {
         val checked = items.indexOf(current).coerceAtLeast(-1)
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(title)
             .setSingleChoiceItems(items.toTypedArray(), checked) { dialog, which ->
                 if (which in items.indices) onPicked(items[which])
@@ -464,7 +470,7 @@ class SettingsActivity : AppCompatActivity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_VARIATION_NORMAL
             minLines = 3
         }
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("User-Agent")
             .setView(input)
             .setPositiveButton("保存") { _, _ ->
@@ -487,11 +493,14 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun showClearLoginDialog(sectionIndex: Int) {
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("清除登录")
             .setMessage("将清除 Cookie（SESSDATA 等），需要重新登录。确定继续吗？")
             .setPositiveButton("确定清除") { _, _ ->
                 BiliClient.cookies.clearAll()
+                BiliClient.prefs.webRefreshToken = null
+                BiliClient.prefs.webCookieRefreshCheckedEpochDay = -1L
+                BiliClient.prefs.biliTicketCheckedEpochDay = -1L
                 Toast.makeText(this, "已清除 Cookie", Toast.LENGTH_SHORT).show()
                 showSection(sectionIndex)
             }

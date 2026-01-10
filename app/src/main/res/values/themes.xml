@@ -6,12 +6,17 @@
         <item name="colorOnPrimary">@color/blbl_text</item>
         <item name="colorSecondary">@color/blbl_purple</item>
         <item name="colorOnSecondary">@color/blbl_text</item>
+        <item name="android:colorBackground">@color/blbl_bg</item>
+        <item name="colorSurface">@color/blbl_surface</item>
+        <item name="colorOnSurface">@color/blbl_text</item>
         <item name="android:statusBarColor">@color/blbl_bg</item>
         <item name="android:navigationBarColor">@color/blbl_bg</item>
         <item name="android:windowBackground">@color/blbl_bg</item>
         <item name="android:textColorPrimary">@color/blbl_text</item>
         <item name="android:textColorSecondary">@color/blbl_text_secondary</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.Blbl.MaterialAlertDialog</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.Blbl.MaterialAlertDialog</item>
+        <item name="android:alertDialogTheme">@style/ThemeOverlay.Blbl.MaterialAlertDialog</item>
         <item name="android:forceDarkAllowed" tools:targetApi="q">true</item>
     </style>
 </resources>
-
