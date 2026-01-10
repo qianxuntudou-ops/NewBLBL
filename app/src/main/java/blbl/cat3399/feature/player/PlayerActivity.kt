@@ -9,7 +9,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.SeekBar
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -35,6 +34,7 @@ import blbl.cat3399.core.model.DanmakuShield
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.ui.Immersive
 import blbl.cat3399.databinding.ActivityPlayerBinding
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -231,6 +231,7 @@ class PlayerActivity : AppCompatActivity() {
         val keyCode = event.keyCode
 
         if (event.action == KeyEvent.ACTION_UP) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) return true
             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
                 if (holdSeekJob != null) {
                     stopHoldSeek()
@@ -565,6 +566,14 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun handleBackExitOrDismiss(): Boolean {
+        val exo = player
+        if (exo != null &&
+            exo.playbackState == Player.STATE_ENDED &&
+            !BiliClient.prefs.playerDoubleBackOnEnded
+        ) {
+            finish()
+            return true
+        }
         val now = SystemClock.uptimeMillis()
         val isSecond = now - lastBackAtMs <= BACK_DOUBLE_PRESS_WINDOW_MS
         if (isSecond) {
@@ -949,7 +958,7 @@ class PlayerActivity : AppCompatActivity() {
     private fun showCodecDialog() {
         val options = arrayOf("AVC", "HEVC", "AV1")
         val current = options.indexOf(session.preferCodec).coerceAtLeast(0)
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("视频编码")
             .setSingleChoiceItems(options, current) { dialog, which ->
                 val selected = options.getOrNull(which) ?: "AVC"
@@ -965,7 +974,7 @@ class PlayerActivity : AppCompatActivity() {
     private fun showSpeedDialog() {
         val options = arrayOf("0.50x", "0.75x", "1.00x", "1.25x", "1.50x", "2.00x")
         val current = options.indexOf(String.format(Locale.US, "%.2fx", session.playbackSpeed)).let { if (it >= 0) it else 2 }
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("播放速度")
             .setSingleChoiceItems(options, current) { dialog, which ->
                 val selected = options.getOrNull(which) ?: "1.00x"
@@ -1118,7 +1127,7 @@ class PlayerActivity : AppCompatActivity() {
         val options = listOf(1.0f, 0.8f, 0.6f, 0.4f, 0.2f)
         val items = options.map { String.format(Locale.US, "%.2f", it) }.toTypedArray()
         val current = options.indexOfFirst { kotlin.math.abs(it - session.danmaku.opacity) < 0.01f }.let { if (it >= 0) it else 0 }
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("弹幕透明度")
             .setSingleChoiceItems(items, current) { dialog, which ->
                 val v = options.getOrNull(which) ?: session.danmaku.opacity
@@ -1135,7 +1144,7 @@ class PlayerActivity : AppCompatActivity() {
         val options = listOf(14, 16, 18, 20, 24, 28, 32, 36, 40)
         val items = options.map { it.toString() }.toTypedArray()
         val current = options.indexOf(session.danmaku.textSizeSp.toInt()).let { if (it >= 0) it else 2 }
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("弹幕字号(sp)")
             .setSingleChoiceItems(items, current) { dialog, which ->
                 val v = (options.getOrNull(which) ?: session.danmaku.textSizeSp.toInt()).toFloat()
@@ -1152,7 +1161,7 @@ class PlayerActivity : AppCompatActivity() {
         val options = (1..10).toList()
         val items = options.map { it.toString() }.toTypedArray()
         val current = options.indexOf(session.danmaku.speedLevel).let { if (it >= 0) it else 3 }
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("弹幕速度(1~10)")
             .setSingleChoiceItems(items, current) { dialog, which ->
                 val v = options.getOrNull(which) ?: session.danmaku.speedLevel
@@ -1174,7 +1183,7 @@ class PlayerActivity : AppCompatActivity() {
         )
         val items = options.map { it.second }.toTypedArray()
         val current = options.indexOfFirst { kotlin.math.abs(it.first - session.danmaku.area) < 0.01f }.let { if (it >= 0) it else 3 }
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("弹幕区域")
             .setSingleChoiceItems(items, current) { dialog, which ->
                 val v = options.getOrNull(which)?.first ?: session.danmaku.area
@@ -1296,7 +1305,7 @@ class PlayerActivity : AppCompatActivity() {
                 else -> subtitleItems.firstOrNull { it.lan.equals(ov, ignoreCase = true) }?.lanDoc ?: subtitleItems.first().lanDoc
             }
         val checked = items.indexOf(currentLabel).coerceAtLeast(0)
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("字幕语言（本次播放）")
             .setSingleChoiceItems(items.toTypedArray(), checked) { dialog, which ->
                 val chosen = items.getOrNull(which).orEmpty()
@@ -1461,7 +1470,7 @@ class PlayerActivity : AppCompatActivity() {
         val currentIndex =
             options.indexOfFirst { parseResolutionFromOption(it) == currentQn }
                 .takeIf { it >= 0 } ?: 0
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("分辨率")
             .setSingleChoiceItems(options.toTypedArray(), currentIndex) { dialog, which ->
                 val selected = options.getOrNull(which).orEmpty()
@@ -1576,7 +1585,7 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_BVID = "bvid"
         const val EXTRA_CID = "cid"
         private const val SEEK_MAX = 10_000
-        private const val AUTO_HIDE_MS = 6_000L
+        private const val AUTO_HIDE_MS = 4_000L
         private const val EDGE_TAP_THRESHOLD = 0.28f
         private const val TAP_SEEK_ACTIVE_MS = 1_200L
         private const val SMART_SEEK_WINDOW_MS = 900L
