@@ -45,7 +45,9 @@ class VideoCardAdapter(
     class Vh(private val binding: ItemVideoCardBinding) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: VideoCard, onClick: (VideoCard) -> Unit) {
             binding.tvTitle.text = item.title
-            binding.tvSubtitle.text = if (item.ownerName.isBlank()) "" else "UP ${item.ownerName}"
+            binding.tvSubtitle.text =
+                item.pubDateText
+                    ?: if (item.ownerName.isBlank()) "" else "UP ${item.ownerName}"
             binding.tvDuration.text = Format.duration(item.durationSec)
             binding.tvView.text = Format.count(item.view)
             binding.tvDanmaku.text = Format.count(item.danmaku)

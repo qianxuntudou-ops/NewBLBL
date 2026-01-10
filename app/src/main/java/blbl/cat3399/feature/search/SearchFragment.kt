@@ -21,11 +21,12 @@ import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.databinding.FragmentSearchBinding
 import blbl.cat3399.feature.player.PlayerActivity
 import blbl.cat3399.feature.video.VideoCardAdapter
+import blbl.cat3399.ui.BackPressHandler
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-class SearchFragment : Fragment() {
+class SearchFragment : Fragment(), BackPressHandler {
     private var _binding: FragmentSearchBinding? = null
     private val binding get() = _binding!!
 
@@ -66,7 +67,7 @@ class SearchFragment : Fragment() {
         }
     }
 
-    fun handleBackPressed(): Boolean {
+    override fun handleBackPressed(): Boolean {
         val b = _binding ?: return false
         val resultsVisible = b.panelResults.visibility == View.VISIBLE
         AppLog.d("Back", "SearchFragment handleBackPressed resultsVisible=$resultsVisible")

@@ -1,5 +1,8 @@
 package blbl.cat3399.core.util
 
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 
 object Format {
@@ -20,5 +23,24 @@ object Format {
             else -> v.toString()
         }
     }
-}
 
+    fun timeText(epochSec: Long, nowMs: Long = System.currentTimeMillis()): String {
+        if (epochSec <= 0) return "-"
+        val whenMs = epochSec * 1000
+
+        val now = Calendar.getInstance().apply { timeInMillis = nowMs }
+        val then = Calendar.getInstance().apply { timeInMillis = whenMs }
+
+        val sameDay =
+            now.get(Calendar.YEAR) == then.get(Calendar.YEAR) &&
+                now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)
+
+        return if (sameDay) {
+            val sdf = SimpleDateFormat("HH:mm", Locale.CHINA)
+            "今天 ${sdf.format(Date(whenMs))}"
+        } else {
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
+            sdf.format(Date(whenMs))
+        }
+    }
+}

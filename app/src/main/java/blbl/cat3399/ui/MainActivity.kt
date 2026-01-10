@@ -27,6 +27,7 @@ import blbl.cat3399.feature.category.CategoryFragment
 import blbl.cat3399.feature.dynamic.DynamicFragment
 import blbl.cat3399.feature.home.HomeFragment
 import blbl.cat3399.feature.login.QrLoginActivity
+import blbl.cat3399.feature.my.MyFragment
 import blbl.cat3399.feature.search.SearchFragment
 import blbl.cat3399.feature.settings.SettingsActivity
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -69,6 +70,7 @@ class MainActivity : AppCompatActivity() {
                     SidebarNavAdapter.ID_HOME -> showRoot(HomeFragment.newInstance())
                     SidebarNavAdapter.ID_CATEGORY -> showRoot(CategoryFragment.newInstance())
                     SidebarNavAdapter.ID_DYNAMIC -> showRoot(DynamicFragment.newInstance())
+                    SidebarNavAdapter.ID_MY -> showRoot(MyFragment.newInstance())
                     else -> false
                 }
             },
@@ -82,6 +84,7 @@ class MainActivity : AppCompatActivity() {
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_HOME, getString(R.string.tab_recommend), R.drawable.ic_nav_home),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_CATEGORY, getString(R.string.tab_category), R.drawable.ic_nav_category),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_DYNAMIC, getString(R.string.tab_dynamic), R.drawable.ic_nav_dynamic),
+                SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_MY, getString(R.string.tab_my), R.drawable.ic_nav_my),
             ),
             selectedId = SidebarNavAdapter.ID_HOME,
         )
@@ -102,7 +105,7 @@ class MainActivity : AppCompatActivity() {
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
                     val current = supportFragmentManager.findFragmentById(R.id.main_container)
-                    val handled = (current as? SearchFragment)?.handleBackPressed() == true
+                    val handled = (current as? BackPressHandler)?.handleBackPressed() == true
                     AppLog.d("Back", "back current=${current?.javaClass?.simpleName} handled=$handled")
                     if (handled) return
                     showExitConfirm()

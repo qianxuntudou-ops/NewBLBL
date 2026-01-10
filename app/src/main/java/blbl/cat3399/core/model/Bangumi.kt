@@ -1,0 +1,32 @@
+package blbl.cat3399.core.model
+
+data class BangumiSeason(
+    val seasonId: Long,
+    val title: String,
+    val coverUrl: String?,
+    val totalCount: Int?,
+    val lastEpIndex: Int?,
+    val newestEpIndex: Int?,
+    val isFinish: Boolean?,
+)
+
+data class BangumiEpisode(
+    val epId: Long,
+    val title: String,
+    val longTitle: String,
+    val coverUrl: String?,
+    val badge: String?,
+)
+
+data class BangumiSeasonDetail(
+    val seasonId: Long,
+    val title: String,
+    val coverUrl: String?,
+    val subtitle: String?,
+    val evaluate: String?,
+    val ratingScore: Double?,
+    val views: Long?,
+    val danmaku: Long?,
+    val episodes: List<BangumiEpisode>,
+)
+

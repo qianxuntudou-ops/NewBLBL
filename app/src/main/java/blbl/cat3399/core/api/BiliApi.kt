@@ -1,11 +1,16 @@
 package blbl.cat3399.core.api
 
 import blbl.cat3399.core.log.AppLog
+import blbl.cat3399.core.model.BangumiEpisode
+import blbl.cat3399.core.model.BangumiSeason
+import blbl.cat3399.core.model.BangumiSeasonDetail
 import blbl.cat3399.core.model.Danmaku
+import blbl.cat3399.core.model.FavFolder
 import blbl.cat3399.core.model.Following
 import blbl.cat3399.core.model.VideoCard
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.net.WebCookieMaintainer
+import blbl.cat3399.core.util.Format
 import blbl.cat3399.proto.dm.DmSegMobileReply
 import blbl.cat3399.proto.dmview.DmWebViewReply
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +52,24 @@ object BiliApi {
         val segmentPageSizeMs: Long,
         val count: Long,
         val setting: DanmakuWebSetting?,
+    )
+
+    data class HistoryCursor(
+        val max: Long,
+        val business: String?,
+        val viewAt: Long,
+    )
+
+    data class HistoryPage(
+        val items: List<VideoCard>,
+        val cursor: HistoryCursor?,
+    )
+
+    data class HasMorePage<T>(
+        val items: List<T>,
+        val page: Int,
+        val hasMore: Boolean,
+        val total: Int,
     )
 
     suspend fun nav(): JSONObject {
@@ -172,6 +195,301 @@ object BiliApi {
         return RelationStat(
             following = data.optLong("following"),
             follower = data.optLong("follower"),
+        )
+    }
+
+    suspend fun historyCursor(
+        max: Long = 0,
+        business: String? = null,
+        viewAt: Long = 0,
+        ps: Int = 24,
+    ): HistoryPage {
+        val params = mutableMapOf(
+            "max" to max.coerceAtLeast(0).toString(),
+            "view_at" to viewAt.coerceAtLeast(0).toString(),
+            "ps" to ps.coerceIn(1, 30).toString(),
+        )
+        if (!business.isNullOrBlank()) params["business"] = business
+        val url = BiliClient.withQuery("https://api.bilibili.com/x/web-interface/history/cursor", params)
+        val json = BiliClient.getJson(url)
+        val code = json.optInt("code", 0)
+        if (code != 0) {
+            val msg = json.optString("message", json.optString("msg", ""))
+            throw BiliApiException(apiCode = code, apiMessage = msg)
+        }
+        val data = json.optJSONObject("data") ?: JSONObject()
+        val cursorObj = data.optJSONObject("cursor")
+        val cursor =
+            cursorObj?.let {
+                HistoryCursor(
+                    max = it.optLong("max"),
+                    business = it.optString("business", "").takeIf { s -> s.isNotBlank() },
+                    viewAt = it.optLong("view_at"),
+                )
+            }
+        val list = data.optJSONArray("list") ?: JSONArray()
+        val cards =
+            withContext(Dispatchers.Default) {
+                val out = ArrayList<VideoCard>(list.length())
+                for (i in 0 until list.length()) {
+                    val it = list.optJSONObject(i) ?: continue
+                    val history = it.optJSONObject("history") ?: JSONObject()
+                    val businessType = history.optString("business", "")
+                    if (businessType != "archive") continue
+                    val bvid = history.optString("bvid", "").trim()
+                    if (bvid.isBlank()) continue
+
+                    val covers = it.optJSONArray("covers")
+                    val coverUrl =
+                        it.optString("cover", "").takeIf { s -> s.isNotBlank() }
+                            ?: covers?.optString(0)?.takeIf { s -> s.isNotBlank() }
+                            ?: ""
+
+                    val viewAtSec = it.optLong("view_at").takeIf { v -> v > 0 }
+                    out.add(
+                        VideoCard(
+                            bvid = bvid,
+                            cid = history.optLong("cid").takeIf { v -> v > 0 },
+                            title = it.optString("title", ""),
+                            coverUrl = coverUrl,
+                            durationSec = it.optInt("duration", 0),
+                            ownerName = it.optString("author_name", ""),
+                            ownerFace = it.optString("author_face").takeIf { s -> s.isNotBlank() },
+                            view = null,
+                            danmaku = null,
+                            pubDateText = viewAtSec?.let { v -> Format.timeText(v) },
+                        ),
+                    )
+                }
+                out
+            }
+        return HistoryPage(items = cards, cursor = cursor)
+    }
+
+    suspend fun toViewList(): List<VideoCard> {
+        val url = "https://api.bilibili.com/x/v2/history/toview"
+        val json = BiliClient.getJson(url)
+        val code = json.optInt("code", 0)
+        if (code != 0) {
+            val msg = json.optString("message", json.optString("msg", ""))
+            throw BiliApiException(apiCode = code, apiMessage = msg)
+        }
+        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+        return withContext(Dispatchers.Default) { parseVideoCards(list) }
+    }
+
+    private suspend fun favFolderInfo(mediaId: Long): FavFolder? {
+        val url = BiliClient.withQuery(
+            "https://api.bilibili.com/x/v3/fav/folder/info",
+            mapOf("media_id" to mediaId.toString()),
+        )
+        val json = BiliClient.getJson(url)
+        val code = json.optInt("code", 0)
+        if (code != 0) return null
+        val data = json.optJSONObject("data") ?: return null
+        return FavFolder(
+            mediaId = data.optLong("id"),
+            title = data.optString("title", ""),
+            coverUrl = data.optString("cover").takeIf { it.isNotBlank() },
+            mediaCount = data.optInt("media_count", 0),
+        )
+    }
+
+    suspend fun favFolders(upMid: Long): List<FavFolder> {
+        val url = BiliClient.withQuery(
+            "https://api.bilibili.com/x/v3/fav/folder/created/list-all",
+            mapOf(
+                "up_mid" to upMid.toString(),
+                "type" to "2",
+                "web_location" to "333.1387",
+            ),
+        )
+        val json = BiliClient.getJson(url)
+        val code = json.optInt("code", 0)
+        if (code != 0) {
+            val msg = json.optString("message", json.optString("msg", ""))
+            throw BiliApiException(apiCode = code, apiMessage = msg)
+        }
+        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+        val folders = withContext(Dispatchers.Default) {
+            val out = ArrayList<FavFolder>(list.length())
+            for (i in 0 until list.length()) {
+                val obj = list.optJSONObject(i) ?: continue
+                val mediaId = obj.optLong("id").takeIf { it > 0 } ?: continue
+                out.add(
+                    FavFolder(
+                        mediaId = mediaId,
+                        title = obj.optString("title", ""),
+                        coverUrl = obj.optString("cover").takeIf { it.isNotBlank() },
+                        mediaCount = obj.optInt("media_count", 0),
+                    ),
+                )
+            }
+            out
+        }
+        val missingIndices = folders.withIndex().filter { it.value.coverUrl.isNullOrBlank() }.map { it.index }
+        if (missingIndices.isEmpty()) return folders
+
+        val enriched = folders.toMutableList()
+        for (idx in missingIndices) {
+            val f = folders[idx]
+            val info = runCatching { favFolderInfo(f.mediaId) }.getOrNull()
+            if (info != null && !info.coverUrl.isNullOrBlank()) {
+                enriched[idx] = f.copy(coverUrl = info.coverUrl)
+            }
+        }
+        return enriched
+    }
+
+    suspend fun favFolderResources(
+        mediaId: Long,
+        pn: Int = 1,
+        ps: Int = 20,
+    ): HasMorePage<VideoCard> {
+        val url = BiliClient.withQuery(
+            "https://api.bilibili.com/x/v3/fav/resource/list",
+            mapOf(
+                "media_id" to mediaId.toString(),
+                "pn" to pn.coerceAtLeast(1).toString(),
+                "ps" to ps.coerceIn(1, 20).toString(),
+                "platform" to "web",
+            ),
+        )
+        val json = BiliClient.getJson(url)
+        val code = json.optInt("code", 0)
+        if (code != 0) {
+            val msg = json.optString("message", json.optString("msg", ""))
+            throw BiliApiException(apiCode = code, apiMessage = msg)
+        }
+        val data = json.optJSONObject("data") ?: JSONObject()
+        val medias = data.optJSONArray("medias") ?: JSONArray()
+        val hasMore = data.optBoolean("has_more", false)
+        val total = data.optJSONObject("info")?.optInt("media_count", 0) ?: 0
+        val cards =
+            withContext(Dispatchers.Default) {
+                val out = ArrayList<VideoCard>(medias.length())
+                for (i in 0 until medias.length()) {
+                    val obj = medias.optJSONObject(i) ?: continue
+                    val bvid = obj.optString("bvid", "").trim()
+                    if (bvid.isBlank()) continue
+                    val upper = obj.optJSONObject("upper") ?: JSONObject()
+                    val cnt = obj.optJSONObject("cnt_info") ?: JSONObject()
+                    val favTime = obj.optLong("fav_time").takeIf { it > 0 }
+                    out.add(
+                        VideoCard(
+                            bvid = bvid,
+                            cid = obj.optLong("cid").takeIf { it > 0 },
+                            title = obj.optString("title", ""),
+                            coverUrl = obj.optString("cover", ""),
+                            durationSec = obj.optInt("duration", 0),
+                            ownerName = upper.optString("name", ""),
+                            ownerFace = upper.optString("face").takeIf { it.isNotBlank() },
+                            view = cnt.optLong("play").takeIf { it > 0 },
+                            danmaku = cnt.optLong("danmaku").takeIf { it > 0 },
+                            pubDateText = favTime?.let { "收藏于：${Format.timeText(it)}" },
+                        ),
+                    )
+                }
+                out
+            }
+        return HasMorePage(items = cards, page = pn.coerceAtLeast(1), hasMore = hasMore, total = total)
+    }
+
+    suspend fun bangumiFollowList(
+        vmid: Long,
+        type: Int,
+        pn: Int = 1,
+        ps: Int = 15,
+    ): PagedResult<BangumiSeason> {
+        val url = BiliClient.withQuery(
+            "https://api.bilibili.com/x/space/bangumi/follow/list",
+            mapOf(
+                "vmid" to vmid.toString(),
+                "type" to type.toString(),
+                "pn" to pn.coerceAtLeast(1).toString(),
+                "ps" to ps.coerceIn(1, 30).toString(),
+            ),
+        )
+        val json = BiliClient.getJson(url)
+        val code = json.optInt("code", 0)
+        if (code != 0) {
+            val msg = json.optString("message", json.optString("msg", ""))
+            throw BiliApiException(apiCode = code, apiMessage = msg)
+        }
+        val data = json.optJSONObject("data") ?: JSONObject()
+        val list = data.optJSONArray("list") ?: JSONArray()
+        val total = data.optInt("total", 0)
+        val page = data.optInt("pn", pn)
+        val pageSize = data.optInt("ps", ps)
+        val pages = if (pageSize <= 0) 0 else ((total + pageSize - 1) / pageSize)
+        val items =
+            withContext(Dispatchers.Default) {
+                val out = ArrayList<BangumiSeason>(list.length())
+                for (i in 0 until list.length()) {
+                    val obj = list.optJSONObject(i) ?: continue
+                    val seasonId = obj.optLong("season_id").takeIf { it > 0 } ?: continue
+                    out.add(
+                        BangumiSeason(
+                            seasonId = seasonId,
+                            title = obj.optString("title", ""),
+                            coverUrl = obj.optString("cover").takeIf { it.isNotBlank() },
+                            totalCount = obj.optInt("total_count").takeIf { it > 0 },
+                            isFinish = obj.optInt("is_finish", -1).takeIf { it >= 0 }?.let { it == 1 },
+                            newestEpIndex = obj.optInt("newest_ep_index").takeIf { it > 0 },
+                            lastEpIndex = obj.optInt("last_ep_index").takeIf { it > 0 },
+                        ),
+                    )
+                }
+                out
+            }
+        return PagedResult(items = items, page = page, pages = pages, total = total)
+    }
+
+    suspend fun bangumiSeasonDetail(seasonId: Long): BangumiSeasonDetail {
+        val url = BiliClient.withQuery(
+            "https://api.bilibili.com/pgc/view/web/season",
+            mapOf("season_id" to seasonId.toString()),
+        )
+        val json = BiliClient.getJson(url)
+        val code = json.optInt("code", 0)
+        if (code != 0) {
+            val msg = json.optString("message", json.optString("msg", ""))
+            throw BiliApiException(apiCode = code, apiMessage = msg)
+        }
+        val result = json.optJSONObject("result") ?: JSONObject()
+        val ratingScore = result.optJSONObject("rating")?.optDouble("score")?.takeIf { it > 0 }
+        val stat = result.optJSONObject("stat") ?: JSONObject()
+        val views = stat.optLong("views").takeIf { it > 0 } ?: stat.optLong("view").takeIf { it > 0 }
+        val danmaku = stat.optLong("danmakus").takeIf { it > 0 } ?: stat.optLong("danmaku").takeIf { it > 0 }
+        val episodes = result.optJSONArray("episodes") ?: JSONArray()
+        val epList =
+            withContext(Dispatchers.Default) {
+                val out = ArrayList<BangumiEpisode>(episodes.length())
+                for (i in 0 until episodes.length()) {
+                    val ep = episodes.optJSONObject(i) ?: continue
+                    val epId = ep.optLong("id").takeIf { it > 0 } ?: ep.optLong("ep_id").takeIf { it > 0 } ?: continue
+                    out.add(
+                        BangumiEpisode(
+                            epId = epId,
+                            title = ep.optString("title", ""),
+                            longTitle = ep.optString("long_title", ""),
+                            coverUrl = ep.optString("cover").takeIf { it.isNotBlank() },
+                            badge = ep.optString("badge").takeIf { it.isNotBlank() },
+                        ),
+                    )
+                }
+                out
+            }
+        return BangumiSeasonDetail(
+            seasonId = result.optLong("season_id").takeIf { it > 0 } ?: seasonId,
+            title = result.optString("title", result.optString("season_title", "")),
+            coverUrl = result.optString("cover").takeIf { it.isNotBlank() },
+            subtitle = result.optString("subtitle").takeIf { it.isNotBlank() },
+            evaluate = result.optString("evaluate").takeIf { it.isNotBlank() },
+            ratingScore = ratingScore,
+            views = views,
+            danmaku = danmaku,
+            episodes = epList,
         )
     }
 

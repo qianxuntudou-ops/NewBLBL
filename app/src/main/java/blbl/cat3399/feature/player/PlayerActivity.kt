@@ -78,6 +78,13 @@ class PlayerActivity : AppCompatActivity() {
     private var subtitleConfig: MediaItem.SubtitleConfiguration? = null
     private var subtitleItems: List<SubtitleItem> = emptyList()
     private var lastAvailableQns: List<Int> = emptyList()
+    private var danmakuSegmentSizeMs: Int = DANMAKU_DEFAULT_SEGMENT_MS
+    private var danmakuSegmentTotal: Int = 0
+    private var danmakuShield: DanmakuShield? = null
+    private val danmakuLoadedSegments = LinkedHashSet<Int>()
+    private val danmakuLoadingSegments = HashSet<Int>()
+    private val danmakuAll = ArrayList<blbl.cat3399.core.model.Danmaku>()
+    private var lastDanmakuPrefetchAtMs: Long = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -142,6 +149,10 @@ class PlayerActivity : AppCompatActivity() {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 updateProgressUi()
             }
+
+            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                requestDanmakuSegmentsForPosition(newPosition.positionMs, immediate = true)
+            }
         })
 
         val settingsAdapter = PlayerSettingsAdapter { item ->
@@ -186,7 +197,7 @@ class PlayerActivity : AppCompatActivity() {
                         val (qn, fnval) = playUrlParamsForSession()
                         BiliApi.playUrlDash(bvid, cid, qn = qn, fnval = fnval)
                     }
-                val dmJob = async(Dispatchers.IO) { loadDanmaku(cid, aid) }
+                val dmJob = async(Dispatchers.IO) { prepareDanmakuMeta(cid, aid) }
                 val subJob = async(Dispatchers.IO) { prepareSubtitleConfig(viewData, bvid, cid) }
 
                 val playJson = playJob.await()
@@ -212,8 +223,9 @@ class PlayerActivity : AppCompatActivity() {
                 exo.playWhenReady = true
                 updateSubtitleButton()
 
-                val danmakus = dmJob.await()
-                binding.danmakuView.setDanmakus(danmakus)
+                val dmMeta = dmJob.await()
+                applyDanmakuMeta(dmMeta)
+                requestDanmakuSegmentsForPosition(exo.currentPosition.coerceAtLeast(0L), immediate = true)
             } catch (t: Throwable) {
                 AppLog.e("Player", "start failed", t)
                 if (!handlePlayUrlErrorIfNeeded(t)) {
@@ -489,6 +501,7 @@ class PlayerActivity : AppCompatActivity() {
                     val progress = seekBar?.progress ?: return
                     val seekTo = duration * progress / SEEK_MAX
                     exo.seekTo(seekTo)
+                    requestDanmakuSegmentsForPosition(seekTo, immediate = true)
                     scrubbing = false
                     setControlsVisible(true)
                 }
@@ -507,6 +520,7 @@ class PlayerActivity : AppCompatActivity() {
         val duration = exo.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
         val next = (exo.currentPosition + deltaMs).coerceIn(0L, duration)
         exo.seekTo(next)
+        requestDanmakuSegmentsForPosition(next, immediate = true)
     }
 
     private fun startProgressLoop() {
@@ -754,6 +768,7 @@ class PlayerActivity : AppCompatActivity() {
             val p = ((pos.toDouble() / duration.toDouble()) * SEEK_MAX).toInt().coerceIn(0, SEEK_MAX)
             binding.seekProgress.progress = p
         }
+        requestDanmakuSegmentsForPosition(pos, immediate = false)
     }
 
     private fun updateDanmakuButton() {
@@ -1390,7 +1405,13 @@ class PlayerActivity : AppCompatActivity() {
         val url: String,
     )
 
-    private suspend fun loadDanmaku(cid: Long, aid: Long?): List<blbl.cat3399.core.model.Danmaku> {
+    private data class DanmakuMeta(
+        val shield: DanmakuShield,
+        val segmentTotal: Int,
+        val segmentSizeMs: Int,
+    )
+
+    private suspend fun prepareDanmakuMeta(cid: Long, aid: Long?): DanmakuMeta {
         return withContext(Dispatchers.IO) {
             val prefs = BiliClient.prefs
             val followBili = prefs.danmakuFollowBiliShield
@@ -1411,17 +1432,90 @@ class PlayerActivity : AppCompatActivity() {
                 aiEnabled = prefs.danmakuAiShieldEnabled || (setting?.aiEnabled ?: false),
                 aiLevel = maxOf(prefs.danmakuAiShieldLevel, setting?.aiLevel ?: 0),
             )
-            val all = ArrayList<blbl.cat3399.core.model.Danmaku>()
-            // 初版：先拉 3 个分片（约 18 分钟），避免依赖 dm/web/view 登录态。
-            val maxSeg = (dmView?.segmentTotal?.takeIf { it > 0 } ?: 3).coerceAtMost(3)
-            for (seg in 1..maxSeg) {
-                runCatching { all.addAll(BiliApi.dmSeg(cid, seg)) }
-            }
-            all.sortBy { it.timeMs }
-            val filtered = all.filter(shield::allow)
-            AppLog.i("Player", "danmaku cid=$cid raw=${all.size} filtered=${filtered.size} followBili=$followBili hasDmSetting=${setting != null}")
-            filtered
+            val segmentTotal = dmView?.segmentTotal?.takeIf { it > 0 } ?: 0
+            val segmentSizeMs = dmView?.segmentPageSizeMs?.takeIf { it > 0 }?.toInt() ?: DANMAKU_DEFAULT_SEGMENT_MS
+            AppLog.i(
+                "Player",
+                "danmaku cid=$cid segTotal=$segmentTotal segSizeMs=$segmentSizeMs followBili=$followBili hasDmSetting=${setting != null}",
+            )
+            DanmakuMeta(shield = shield, segmentTotal = segmentTotal, segmentSizeMs = segmentSizeMs)
         }
+    }
+
+    private fun applyDanmakuMeta(meta: DanmakuMeta) {
+        danmakuShield = meta.shield
+        danmakuSegmentTotal = meta.segmentTotal
+        danmakuSegmentSizeMs = meta.segmentSizeMs.coerceAtLeast(1)
+        danmakuLoadedSegments.clear()
+        danmakuLoadingSegments.clear()
+        danmakuAll.clear()
+    }
+
+    private fun requestDanmakuSegmentsForPosition(positionMs: Long, immediate: Boolean) {
+        if (danmakuShield == null) return
+        if (!session.danmaku.enabled) return
+        val now = SystemClock.uptimeMillis()
+        if (!immediate && now - lastDanmakuPrefetchAtMs < DANMAKU_PREFETCH_INTERVAL_MS) return
+        lastDanmakuPrefetchAtMs = now
+
+        val cid = currentCid.takeIf { it > 0 } ?: return
+        val segSize = danmakuSegmentSizeMs.coerceAtLeast(1)
+        val targetSeg = (positionMs / segSize).toInt() + 1
+        if (targetSeg <= 0) return
+
+        val toLoad = buildList {
+            add(targetSeg)
+            for (i in 1..DANMAKU_PREFETCH_SEGMENTS) add(targetSeg + i)
+        }.filter { canLoadSegment(it) }
+
+        if (toLoad.isEmpty()) return
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val shield = danmakuShield
+            val newItems = ArrayList<blbl.cat3399.core.model.Danmaku>()
+            val loaded = ArrayList<Int>()
+            for (seg in toLoad) {
+                val list = runCatching { BiliApi.dmSeg(cid, seg) }.getOrNull()
+                if (list == null) continue
+                val filtered = if (shield != null) list.filter(shield::allow) else list
+                if (filtered.isNotEmpty()) newItems.addAll(filtered)
+                loaded.add(seg)
+            }
+            withContext(Dispatchers.Main) {
+                danmakuLoadingSegments.removeAll(toLoad)
+                danmakuLoadedSegments.addAll(loaded)
+                if (newItems.isNotEmpty()) {
+                    danmakuAll.addAll(newItems)
+                    danmakuAll.sortBy { it.timeMs }
+                    trimDanmakuCacheIfNeeded(positionMs)
+                    binding.danmakuView.setDanmakus(danmakuAll)
+                    binding.danmakuView.notifySeek(positionMs)
+                }
+            }
+        }
+    }
+
+    private fun canLoadSegment(segmentIndex: Int): Boolean {
+        if (segmentIndex <= 0) return false
+        if (danmakuSegmentTotal > 0 && segmentIndex > danmakuSegmentTotal) return false
+        if (danmakuLoadedSegments.contains(segmentIndex)) return false
+        if (danmakuLoadingSegments.contains(segmentIndex)) return false
+        danmakuLoadingSegments.add(segmentIndex)
+        return true
+    }
+
+    private fun trimDanmakuCacheIfNeeded(positionMs: Long) {
+        if (danmakuLoadedSegments.size <= DANMAKU_CACHE_SEGMENTS) return
+        val segSize = danmakuSegmentSizeMs.coerceAtLeast(1)
+        val currentSeg = (positionMs / segSize).toInt() + 1
+        val minSeg = (currentSeg - DANMAKU_CACHE_SEGMENTS / 2).coerceAtLeast(1)
+        val maxSeg = minSeg + DANMAKU_CACHE_SEGMENTS - 1
+        val keepSegs = danmakuLoadedSegments.filter { it in minSeg..maxSeg }.toSet()
+        if (keepSegs.size == danmakuLoadedSegments.size) return
+        danmakuLoadedSegments.retainAll(keepSegs)
+        val filtered = danmakuAll.filter { ((it.timeMs / segSize) + 1) in keepSegs }
+        danmakuAll.clear()
+        danmakuAll.addAll(filtered)
     }
 
     private fun configureSubtitleView() {
@@ -1600,5 +1694,9 @@ class PlayerActivity : AppCompatActivity() {
         private const val BACK_DOUBLE_PRESS_WINDOW_MS = 1_500L
         private const val SEEK_HINT_HIDE_DELAY_MS = 900L
         private const val KEY_SCRUB_END_DELAY_MS = 800L
+        private const val DANMAKU_DEFAULT_SEGMENT_MS = 6 * 60 * 1000
+        private const val DANMAKU_PREFETCH_SEGMENTS = 2
+        private const val DANMAKU_PREFETCH_INTERVAL_MS = 1_000L
+        private const val DANMAKU_CACHE_SEGMENTS = 20
     }
 }

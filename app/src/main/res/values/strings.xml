@@ -6,8 +6,25 @@
     <string name="tab_search">搜索</string>
     <string name="tab_category">分类</string>
     <string name="tab_dynamic">动态</string>
+    <string name="tab_my">我的</string>
     <string name="tab_settings">设置</string>
     <string name="sidebar_login">登录</string>
+
+    <string name="my_tab_history">历史</string>
+    <string name="my_tab_fav">收藏</string>
+    <string name="my_tab_bangumi">追番</string>
+    <string name="my_tab_drama">追剧</string>
+    <string name="my_tab_toview">稍后再看</string>
+
+    <string name="my_need_login">该页面需要登录</string>
+    <string name="my_qr_login">二维码登录</string>
+    <string name="my_fav_default_title">默认收藏夹</string>
+    <string name="my_fav_item_count_fmt">%1$d个内容</string>
+    <string name="my_fav_time_fmt">收藏于：%1$s</string>
+    <string name="my_history_time_fmt">观看于：%1$s</string>
+    <string name="my_episode_section">正片剧集</string>
+    <string name="my_btn_continue">继续观看</string>
+    <string name="my_btn_followed">已追</string>
     <string name="search_clear">清空</string>
     <string name="search_backspace">后退</string>
     <string name="search_t9">T9键盘</string>

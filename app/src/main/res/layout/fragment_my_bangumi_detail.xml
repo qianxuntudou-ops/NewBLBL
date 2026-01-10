@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/blbl_bg">
+
+    <ImageButton
+        android:id="@+id/btn_back"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/blbl_focus_bg_round"
+        android:contentDescription="@string/search_backspace"
+        android:focusable="true"
+        android:padding="4dp"
+        android:src="@drawable/ic_back"
+        android:tint="@color/blbl_text_secondary"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <com.google.android.material.imageview.ShapeableImageView
+        android:id="@+id/iv_cover"
+        android:layout_width="180dp"
+        android:layout_height="260dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="12dp"
+        android:scaleType="centerCrop"
+        android:contentDescription="@string/app_name"
+        app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay_Blbl_Rounded"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/btn_back" />
+
+    <TextView
+        android:id="@+id/tv_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="12dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:textColor="@color/blbl_text"
+        android:textSize="22sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/iv_cover"
+        app:layout_constraintTop_toTopOf="@id/iv_cover" />
+
+    <TextView
+        android:id="@+id/tv_meta"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="12dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:textColor="@color/blbl_text_secondary"
+        android:textSize="14sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/iv_cover"
+        app:layout_constraintTop_toBottomOf="@id/tv_title" />
+
+    <TextView
+        android:id="@+id/tv_desc"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="12dp"
+        android:ellipsize="end"
+        android:textColor="@color/blbl_text_secondary"
+        android:textSize="14sp"
+        app:layout_constraintBottom_toTopOf="@id/btn_primary"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/iv_cover"
+        app:layout_constraintTop_toBottomOf="@id/tv_meta" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_primary"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="14dp"
+        android:layout_marginBottom="10dp"
+        android:text="@string/my_btn_continue"
+        app:layout_constraintBottom_toBottomOf="@id/iv_cover"
+        app:layout_constraintStart_toEndOf="@id/iv_cover" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_secondary"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_marginBottom="10dp"
+        android:text="@string/my_btn_followed"
+        app:layout_constraintBottom_toBottomOf="@id/iv_cover"
+        app:layout_constraintStart_toEndOf="@id/btn_primary" />
+
+    <TextView
+        android:id="@+id/tv_episode_header"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginTop="18dp"
+        android:text="@string/my_episode_section"
+        android:textColor="@color/blbl_text"
+        android:textSize="18sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/iv_cover" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler_episodes"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:padding="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tv_episode_header" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+
