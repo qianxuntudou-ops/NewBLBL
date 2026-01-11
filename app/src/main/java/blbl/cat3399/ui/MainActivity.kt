@@ -155,6 +155,12 @@ class MainActivity : AppCompatActivity() {
                 KeyEvent.KEYCODE_DPAD_LEFT -> {
                     if (focused != null && isInMainContainer(focused)) {
                         if (tryMoveDynamicVideoToFollowing(focused)) return true
+                        // If the current view can move LEFT within the main container (e.g. SearchFragment
+                        // history/hot lists), don't steal the key event to enter the sidebar.
+                        val next = focused.focusSearch(View.FOCUS_LEFT)
+                        if (next != null && isInMainContainer(next)) {
+                            return super.dispatchKeyEvent(event)
+                        }
                         if (canEnterSidebarFrom(focused)) {
                             focusSidebarFirstNav()
                             return true
@@ -516,7 +522,13 @@ class MainActivity : AppCompatActivity() {
             if (lm is StaggeredGridLayoutManager) {
                 val child = rv.findContainingItemView(view) ?: view
                 val lp = child.layoutParams as? StaggeredGridLayoutManager.LayoutParams
-                if (lp != null) return lp.spanIndex == 0
+                if (lp != null && lp.spanIndex == 0) {
+                    val focusLoc = IntArray(2)
+                    val containerLoc = IntArray(2)
+                    child.getLocationOnScreen(focusLoc)
+                    binding.mainContainer.getLocationOnScreen(containerLoc)
+                    return (focusLoc[0] - containerLoc[0]) <= dp(24f)
+                }
             }
         }
 

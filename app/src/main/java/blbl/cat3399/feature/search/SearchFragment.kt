@@ -3,7 +3,7 @@ package blbl.cat3399.feature.search
 import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
-import android.animation.AnimatorInflater
+import android.view.FocusFinder
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
@@ -18,6 +18,7 @@ import blbl.cat3399.R
 import blbl.cat3399.core.api.BiliApi
 import blbl.cat3399.core.log.AppLog
 import blbl.cat3399.core.net.BiliClient
+import blbl.cat3399.core.ui.enableDpadTabFocus
 import blbl.cat3399.databinding.FragmentSearchBinding
 import blbl.cat3399.feature.player.PlayerActivity
 import blbl.cat3399.feature.video.VideoCardAdapter
@@ -40,6 +41,9 @@ class SearchFragment : Fragment(), BackPressHandler {
     private var history: List<String> = emptyList()
 
     private var suggestJob: Job? = null
+
+    private var lastFocusedKeyPos: Int = 0
+    private var lastFocusedSuggestPos: Int = 0
 
     private var currentTabIndex: Int = 0
     private var currentOrder: Order = Order.TotalRank
@@ -96,23 +100,140 @@ class SearchFragment : Fragment(), BackPressHandler {
         binding.recyclerKeys.layoutManager = androidx.recyclerview.widget.GridLayoutManager(requireContext(), 6)
         (binding.recyclerKeys.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
         keyAdapter.submit(KEYS)
+        binding.recyclerKeys.addOnChildAttachStateChangeListener(
+            object : RecyclerView.OnChildAttachStateChangeListener {
+                override fun onChildViewAttachedToWindow(view: View) {
+                    view.onFocusChangeListener =
+                        View.OnFocusChangeListener { v, hasFocus ->
+                            if (!hasFocus) return@OnFocusChangeListener
+                            val holder = binding.recyclerKeys.findContainingViewHolder(v) ?: return@OnFocusChangeListener
+                            val pos =
+                                holder.bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }
+                                    ?: return@OnFocusChangeListener
+                            lastFocusedKeyPos = pos
+                        }
+                }
+
+                override fun onChildViewDetachedFromWindow(view: View) {
+                    view.onFocusChangeListener = null
+                }
+            },
+        )
 
         binding.recyclerSuggest.adapter = suggestAdapter
-        binding.recyclerSuggest.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(requireContext())
+        binding.recyclerSuggest.layoutManager =
+            StaggeredGridLayoutManager(1, StaggeredGridLayoutManager.VERTICAL).apply {
+                gapStrategy = StaggeredGridLayoutManager.GAP_HANDLING_NONE
+            }
         (binding.recyclerSuggest.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
         binding.recyclerSuggest.addOnChildAttachStateChangeListener(
             object : RecyclerView.OnChildAttachStateChangeListener {
                 override fun onChildViewAttachedToWindow(view: View) {
                     view.setOnKeyListener { v, keyCode, event ->
                         if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-                        if (keyCode != KeyEvent.KEYCODE_DPAD_DOWN) return@setOnKeyListener false
-                        if (binding.btnClearHistory.visibility != View.VISIBLE) return@setOnKeyListener false
                         val holder = binding.recyclerSuggest.findContainingViewHolder(v) ?: return@setOnKeyListener false
-                        val pos = holder.bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION } ?: return@setOnKeyListener false
-                        val last = (binding.recyclerSuggest.adapter?.itemCount ?: 0) - 1
-                        if (pos != last) return@setOnKeyListener false
-                        binding.btnClearHistory.requestFocus()
-                        true
+                        val pos =
+                            holder.bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }
+                                ?: return@setOnKeyListener false
+
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                focusLastKey()
+                                true
+                            }
+
+                            KeyEvent.KEYCODE_DPAD_UP -> {
+                                if (pos == 0) return@setOnKeyListener true
+                                // Top edge: don't escape to sidebar.
+                                if (!binding.recyclerSuggest.canScrollVertically(-1)) {
+                                    val lm =
+                                        binding.recyclerSuggest.layoutManager as? StaggeredGridLayoutManager
+                                            ?: return@setOnKeyListener false
+                                    val first = IntArray(lm.spanCount)
+                                    lm.findFirstVisibleItemPositions(first)
+                                    if (first.any { it == pos }) return@setOnKeyListener true
+                                }
+                                false
+                            }
+
+                            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                val last = (binding.recyclerSuggest.adapter?.itemCount ?: 0) - 1
+                                if (pos != last) return@setOnKeyListener false
+                                if (binding.btnClearHistory.visibility == View.VISIBLE) {
+                                    binding.btnClearHistory.requestFocus()
+                                    return@setOnKeyListener true
+                                }
+                                // Bottom edge: don't escape to sidebar.
+                                true
+                            }
+
+                            else -> false
+                        }
+                    }
+
+                    view.onFocusChangeListener =
+                        View.OnFocusChangeListener { v, hasFocus ->
+                            if (!hasFocus) return@OnFocusChangeListener
+                            val holder = binding.recyclerSuggest.findContainingViewHolder(v) ?: return@OnFocusChangeListener
+                            val pos =
+                                holder.bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }
+                                    ?: return@OnFocusChangeListener
+                            lastFocusedSuggestPos = pos
+                        }
+                }
+
+                override fun onChildViewDetachedFromWindow(view: View) {
+                    view.setOnKeyListener(null)
+                    view.onFocusChangeListener = null
+                }
+            },
+        )
+
+        binding.recyclerHot.adapter = hotAdapter
+        binding.recyclerHot.layoutManager =
+            StaggeredGridLayoutManager(1, StaggeredGridLayoutManager.VERTICAL).apply {
+                gapStrategy = StaggeredGridLayoutManager.GAP_HANDLING_NONE
+            }
+        (binding.recyclerHot.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+        binding.recyclerHot.addOnChildAttachStateChangeListener(
+            object : RecyclerView.OnChildAttachStateChangeListener {
+                override fun onChildViewAttachedToWindow(view: View) {
+                    view.setOnKeyListener { v, keyCode, event ->
+                        if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                        val holder = binding.recyclerHot.findContainingViewHolder(v) ?: return@setOnKeyListener false
+                        val pos =
+                            holder.bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }
+                                ?: return@setOnKeyListener false
+
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                if (!focusHistoryAt(pos) && !focusLastHistory()) focusLastKey()
+                                true
+                            }
+
+                            KeyEvent.KEYCODE_DPAD_UP -> {
+                                if (pos == 0) return@setOnKeyListener true
+                                // Top edge: don't escape to sidebar.
+                                if (!binding.recyclerHot.canScrollVertically(-1)) {
+                                    val lm =
+                                        binding.recyclerHot.layoutManager as? StaggeredGridLayoutManager
+                                            ?: return@setOnKeyListener false
+                                    val first = IntArray(lm.spanCount)
+                                    lm.findFirstVisibleItemPositions(first)
+                                    if (first.any { it == pos }) return@setOnKeyListener true
+                                }
+                                false
+                            }
+
+                            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                // Bottom edge: don't escape to sidebar.
+                                val last = (binding.recyclerHot.adapter?.itemCount ?: 0) - 1
+                                if (pos != last) return@setOnKeyListener false
+                                true
+                            }
+
+                            else -> false
+                        }
                     }
                 }
 
@@ -122,17 +243,31 @@ class SearchFragment : Fragment(), BackPressHandler {
             },
         )
 
-        binding.recyclerHot.adapter = hotAdapter
-        binding.recyclerHot.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(requireContext())
-        (binding.recyclerHot.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
-
         binding.btnClear.setOnClickListener {
             setQuery("")
+        }
+        binding.btnClear.setOnKeyListener { _, keyCode, event ->
+            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            if (keyCode != KeyEvent.KEYCODE_DPAD_UP) return@setOnKeyListener false
+            // Top edge: don't escape to sidebar.
+            true
         }
         binding.btnBackspace.setOnClickListener {
             if (query.isNotEmpty()) setQuery(query.dropLast(1))
         }
+        binding.btnBackspace.setOnKeyListener { _, keyCode, event ->
+            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            if (keyCode != KeyEvent.KEYCODE_DPAD_UP) return@setOnKeyListener false
+            // Top edge: don't escape to sidebar.
+            true
+        }
         binding.btnSearch.setOnClickListener { performSearch() }
+        binding.btnSearch.setOnKeyListener { _, keyCode, event ->
+            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            if (keyCode != KeyEvent.KEYCODE_DPAD_DOWN) return@setOnKeyListener false
+            // Bottom edge: don't escape to sidebar.
+            true
+        }
         binding.btnClearHistory.setOnClickListener {
             BiliClient.prefs.clearSearchHistory()
             reloadHistory()
@@ -142,8 +277,18 @@ class SearchFragment : Fragment(), BackPressHandler {
         }
         binding.btnClearHistory.setOnKeyListener { _, keyCode, event ->
             if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-            if (keyCode != KeyEvent.KEYCODE_DPAD_UP) return@setOnKeyListener false
-            if (focusLastHistoryItem()) true else false
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> focusLastHistoryItem()
+                KeyEvent.KEYCODE_DPAD_LEFT -> {
+                    focusLastKey()
+                    true
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    // Bottom edge: don't escape to sidebar.
+                    true
+                }
+                else -> false
+            }
         }
 
         updateQueryUi()
@@ -170,22 +315,57 @@ class SearchFragment : Fragment(), BackPressHandler {
             object : RecyclerView.OnChildAttachStateChangeListener {
                 override fun onChildViewAttachedToWindow(view: View) {
                     view.setOnKeyListener { v, keyCode, event ->
-                        if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-                        if (keyCode != KeyEvent.KEYCODE_DPAD_UP) return@setOnKeyListener false
-                        if (binding.panelResults.visibility != View.VISIBLE) return@setOnKeyListener false
+	                        if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+	                        if (binding.panelResults.visibility != View.VISIBLE) return@setOnKeyListener false
 
-                        if (!binding.recyclerResults.canScrollVertically(-1)) {
-                            val lm = binding.recyclerResults.layoutManager as? StaggeredGridLayoutManager ?: return@setOnKeyListener false
-                            val holder = binding.recyclerResults.findContainingViewHolder(v) ?: return@setOnKeyListener false
-                            val pos = holder.bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION } ?: return@setOnKeyListener false
-                            val first = IntArray(lm.spanCount)
-                            lm.findFirstVisibleItemPositions(first)
-                            if (first.any { it == pos }) {
-                                focusSelectedTab()
-                                return@setOnKeyListener true
-                            }
-                        }
-                        false
+	                        val lm = binding.recyclerResults.layoutManager as? StaggeredGridLayoutManager ?: return@setOnKeyListener false
+	                        val holder = binding.recyclerResults.findContainingViewHolder(v) ?: return@setOnKeyListener false
+	                        val pos = holder.bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION } ?: return@setOnKeyListener false
+
+	                        when (keyCode) {
+	                            KeyEvent.KEYCODE_DPAD_UP -> {
+	                                if (!binding.recyclerResults.canScrollVertically(-1)) {
+	                                    val first = IntArray(lm.spanCount)
+	                                    lm.findFirstVisibleItemPositions(first)
+	                                    if (first.any { it == pos }) {
+	                                        focusSelectedTab()
+	                                        return@setOnKeyListener true
+	                                    }
+	                                }
+	                                false
+	                            }
+
+	                            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+	                                val itemView = binding.recyclerResults.findContainingItemView(v) ?: return@setOnKeyListener false
+	                                val next = FocusFinder.getInstance().findNextFocus(binding.recyclerResults, itemView, View.FOCUS_RIGHT)
+	                                if (next == null || !isDescendantOf(next, binding.recyclerResults)) {
+	                                    if (switchToNextTabIfAvailable()) return@setOnKeyListener true
+	                                }
+	                                false
+	                            }
+
+	                            KeyEvent.KEYCODE_DPAD_DOWN -> {
+	                                val itemView = binding.recyclerResults.findContainingItemView(v) ?: return@setOnKeyListener false
+	                                val next = FocusFinder.getInstance().findNextFocus(binding.recyclerResults, itemView, View.FOCUS_DOWN)
+	                                if (next == null || !isDescendantOf(next, binding.recyclerResults)) {
+	                                    if (binding.recyclerResults.canScrollVertically(1)) {
+	                                        // Focus-search failed but the list can still scroll; scroll a bit to let
+	                                        // RecyclerView lay out the next row, and keep focus inside the list.
+	                                        val dy = (itemView.height * 0.8f).toInt().coerceAtLeast(1)
+	                                        binding.recyclerResults.scrollBy(0, dy)
+	                                        return@setOnKeyListener true
+	                                    }
+
+	                                    // Bottom edge: keep focus inside the list (avoid escaping to sidebar) and
+	                                    // trigger loading more if possible.
+	                                    if (!endReached) loadNextPage()
+	                                    return@setOnKeyListener true
+	                                }
+	                                false
+	                            }
+
+	                            else -> false
+	                        }
                     }
                 }
 
@@ -213,49 +393,35 @@ class SearchFragment : Fragment(), BackPressHandler {
 
         binding.tabLayout.removeAllTabs()
         binding.tabLayout.addTab(binding.tabLayout.newTab().setText(R.string.search_tab_video))
-        binding.tabLayout.addTab(binding.tabLayout.newTab().setText(R.string.search_tab_media))
-        binding.tabLayout.addTab(binding.tabLayout.newTab().setText(R.string.search_tab_live))
-        binding.tabLayout.addTab(binding.tabLayout.newTab().setText(R.string.search_tab_user))
-        binding.tabLayout.post {
-            val tabStrip = binding.tabLayout.getChildAt(0) as? ViewGroup
-            tabStrip?.let {
-                for (i in 0 until it.childCount) {
-                    val tabIndex = i
-                    val tabView = it.getChildAt(i) ?: continue
-                    tabView.isFocusable = true
-                    tabView.isClickable = true
-                    tabView.stateListAnimator =
-                        AnimatorInflater.loadStateListAnimator(
-                            tabView.context,
-                            blbl.cat3399.R.animator.blbl_focus_scale,
-                        )
-                    tabView.setOnKeyListener { _, keyCode, event ->
-                        if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-                        when (keyCode) {
-                            KeyEvent.KEYCODE_DPAD_CENTER,
-                            KeyEvent.KEYCODE_ENTER,
-                            KeyEvent.KEYCODE_NUMPAD_ENTER,
-                            -> {
-                                // Only switch tab when activated (not when focused).
-                                binding.tabLayout.getTabAt(tabIndex)?.select()
-                                true
-                            }
+	        binding.tabLayout.addTab(binding.tabLayout.newTab().setText(R.string.search_tab_media))
+	        binding.tabLayout.addTab(binding.tabLayout.newTab().setText(R.string.search_tab_live))
+	        binding.tabLayout.addTab(binding.tabLayout.newTab().setText(R.string.search_tab_user))
+	        binding.tabLayout.post {
+	            binding.tabLayout.enableDpadTabFocus()
+	            val tabStrip = binding.tabLayout.getChildAt(0) as? ViewGroup ?: return@post
+	            for (i in 0 until tabStrip.childCount) {
+	                tabStrip.getChildAt(i).setOnKeyListener { _, keyCode, event ->
+	                    if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+	                    when (keyCode) {
+	                        KeyEvent.KEYCODE_DPAD_UP -> {
+	                            // Prevent focus escaping to sidebar when pressing UP on top controls.
+	                            true
+	                        }
 
-                            KeyEvent.KEYCODE_DPAD_UP -> {
-                                // Prevent focus escaping to sidebar when pressing UP on top controls.
-                                true
-                            }
+	                        KeyEvent.KEYCODE_DPAD_DOWN -> {
+	                            focusFirstResultCardFromTab()
+	                            true
+	                        }
 
-                            else -> false
-                        }
-                    }
-                }
-            }
-        }
-        binding.tabLayout.addOnTabSelectedListener(
-            object : com.google.android.material.tabs.TabLayout.OnTabSelectedListener {
-                override fun onTabSelected(tab: com.google.android.material.tabs.TabLayout.Tab) {
-                    currentTabIndex = tab.position
+	                        else -> false
+	                    }
+	                }
+	            }
+	        }
+	        binding.tabLayout.addOnTabSelectedListener(
+	            object : com.google.android.material.tabs.TabLayout.OnTabSelectedListener {
+	                override fun onTabSelected(tab: com.google.android.material.tabs.TabLayout.Tab) {
+	                    currentTabIndex = tab.position
                     switchTab(tab.position)
                 }
 
@@ -272,10 +438,10 @@ class SearchFragment : Fragment(), BackPressHandler {
             // Prevent focus escaping to sidebar when pressing UP on top controls.
             true
         }
-        binding.tvSort.text = getString(currentOrder.labelRes)
+	        binding.tvSort.text = getString(currentOrder.labelRes)
 
-        binding.swipeRefresh.setOnRefreshListener { resetAndLoad() }
-    }
+	        binding.swipeRefresh.setOnRefreshListener { resetAndLoad() }
+	    }
 
     private fun loadHotAndDefault() {
         viewLifecycleOwner.lifecycleScope.launch {
@@ -401,13 +567,77 @@ class SearchFragment : Fragment(), BackPressHandler {
         return list.take(limit)
     }
 
-    private fun focusSelectedTab(): Boolean {
-        val tabStrip = binding.tabLayout.getChildAt(0) as? ViewGroup ?: return false
-        val pos = binding.tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
-        val tabView = tabStrip.getChildAt(pos) ?: return false
-        tabView.requestFocus()
+	    private fun focusSelectedTab(): Boolean {
+	        val tabStrip = binding.tabLayout.getChildAt(0) as? ViewGroup ?: return false
+	        val pos = binding.tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
+	        val tabView = tabStrip.getChildAt(pos) ?: return false
+	        tabView.requestFocus()
+	        return true
+	    }
+
+	    private fun focusFirstResultCardFromTab(): Boolean {
+	        if (binding.panelResults.visibility != View.VISIBLE) return false
+	        if (currentTabIndex != 0) return true
+	        if (resultAdapter.itemCount <= 0) return true
+	        binding.recyclerResults.post {
+	            val vh = binding.recyclerResults.findViewHolderForAdapterPosition(0)
+	            if (vh != null) {
+	                vh.itemView.requestFocus()
+	                return@post
+	            }
+	            binding.recyclerResults.scrollToPosition(0)
+	            binding.recyclerResults.post {
+	                binding.recyclerResults.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() ?: binding.recyclerResults.requestFocus()
+	            }
+	        }
+	        return true
+	    }
+
+	    private fun switchToNextTabIfAvailable(): Boolean {
+	        if (binding.panelResults.visibility != View.VISIBLE) return false
+	        if (binding.tabLayout.tabCount <= 1) return false
+	        val tabStrip = binding.tabLayout.getChildAt(0) as? ViewGroup ?: return false
+	        val cur = binding.tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
+	        val next = (cur + 1) % binding.tabLayout.tabCount
+	        binding.tabLayout.getTabAt(next)?.select() ?: return false
+	        binding.tabLayout.post { tabStrip.getChildAt(next)?.requestFocus() }
+	        return true
+	    }
+
+	    private fun isDescendantOf(view: View, ancestor: View): Boolean {
+	        var current: View? = view
+	        while (current != null) {
+	            if (current == ancestor) return true
+	            current = current.parent as? View
+	        }
+	        return false
+	    }
+
+	    private fun focusKeyAt(pos: Int): Boolean {
+	        val count = binding.recyclerKeys.adapter?.itemCount ?: return false
+	        if (count <= 0) return false
+	        val safePos = pos.coerceIn(0, count - 1)
+        binding.recyclerKeys.scrollToPosition(safePos)
+        binding.recyclerKeys.post {
+            binding.recyclerKeys.findViewHolderForAdapterPosition(safePos)?.itemView?.requestFocus()
+        }
         return true
     }
+
+    private fun focusLastKey(): Boolean = focusKeyAt(lastFocusedKeyPos).also { if (!it) focusFirstKey() }
+
+    private fun focusHistoryAt(pos: Int): Boolean {
+        val count = binding.recyclerSuggest.adapter?.itemCount ?: return false
+        if (count <= 0) return false
+        val safePos = pos.coerceIn(0, count - 1)
+        binding.recyclerSuggest.scrollToPosition(safePos)
+        binding.recyclerSuggest.post {
+            binding.recyclerSuggest.findViewHolderForAdapterPosition(safePos)?.itemView?.requestFocus()
+        }
+        return true
+    }
+
+    private fun focusLastHistory(): Boolean = focusHistoryAt(lastFocusedSuggestPos)
 
     private fun focusLastHistoryItem(): Boolean {
         val count = binding.recyclerSuggest.adapter?.itemCount ?: return false
@@ -477,9 +707,12 @@ class SearchFragment : Fragment(), BackPressHandler {
                     return@launch
                 }
 
-                val filtered = list.filter { loadedBvids.add(it.bvid) }
-                if (page == 1) resultAdapter.submit(filtered) else resultAdapter.append(filtered)
-                page++
+	                val filtered = list.filter { loadedBvids.add(it.bvid) }
+	                if (page == 1) resultAdapter.submit(filtered) else resultAdapter.append(filtered)
+	                binding.recyclerResults.post {
+	                    (binding.recyclerResults.layoutManager as? StaggeredGridLayoutManager)?.invalidateSpanAssignments()
+	                }
+	                page++
 
                 if (res.pages in 1..page && page > res.pages) endReached = true
                 if (filtered.isEmpty()) endReached = true
