@@ -20,12 +20,23 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file("keystore/release.keystore")
+            storePassword = project.findProperty("RELEASE_STORE_PASSWORD") as String?
+            keyAlias = project.findProperty("RELEASE_KEY_ALIAS") as String?
+            keyPassword = project.findProperty("RELEASE_KEY_PASSWORD") as String?
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

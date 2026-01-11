@@ -14,3 +14,5 @@ local.properties
 # OS
 .DS_Store
 
+*.apk
+keystore/
