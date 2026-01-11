@@ -17,7 +17,7 @@ import blbl.cat3399.core.log.AppLog
 import blbl.cat3399.databinding.FragmentVideoGridBinding
 import kotlinx.coroutines.launch
 
-class MyBangumiFollowFragment : Fragment() {
+class MyBangumiFollowFragment : Fragment(), MyTabSwitchFocusTarget {
     private var _binding: FragmentVideoGridBinding? = null
     private val binding get() = _binding!!
 
@@ -30,6 +30,7 @@ class MyBangumiFollowFragment : Fragment() {
     private var requestToken: Int = 0
     private var initialLoadTriggered: Boolean = false
     private var pendingRestorePosition: Int? = null
+    private var pendingFocusFirstItemFromTabSwitch: Boolean = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentVideoGridBinding.inflate(inflater, container, false)
@@ -72,7 +73,7 @@ class MyBangumiFollowFragment : Fragment() {
                                 val itemView = binding.recycler.findContainingItemView(v) ?: return@setOnKeyListener false
                                 val next = FocusFinder.getInstance().findNextFocus(binding.recycler, itemView, View.FOCUS_LEFT)
                                 if (next == null || !isDescendantOf(next, binding.recycler)) {
-                                    val switched = switchToPrevMyTabIfAvailable()
+                                    val switched = switchToPrevMyTabFromContentEdge()
                                     return@setOnKeyListener switched
                                 }
                                 false
@@ -82,7 +83,7 @@ class MyBangumiFollowFragment : Fragment() {
                                 val itemView = binding.recycler.findContainingItemView(v) ?: return@setOnKeyListener false
                                 val next = FocusFinder.getInstance().findNextFocus(binding.recycler, itemView, View.FOCUS_RIGHT)
                                 if (next == null || !isDescendantOf(next, binding.recycler)) {
-                                    if (switchToNextMyTabIfAvailable()) return@setOnKeyListener true
+                                    if (switchToNextMyTabFromContentEdge()) return@setOnKeyListener true
                                     return@setOnKeyListener true
                                 }
                                 false
@@ -128,6 +129,47 @@ class MyBangumiFollowFragment : Fragment() {
         super.onResume()
         maybeTriggerInitialLoad()
         restoreFocusIfNeeded()
+        maybeConsumePendingFocusFirstItemFromTabSwitch()
+    }
+
+    override fun requestFocusFirstItemFromTabSwitch(): Boolean {
+        pendingFocusFirstItemFromTabSwitch = true
+        if (!isResumed) return true
+        return maybeConsumePendingFocusFirstItemFromTabSwitch()
+    }
+
+    private fun maybeConsumePendingFocusFirstItemFromTabSwitch(): Boolean {
+        if (!pendingFocusFirstItemFromTabSwitch) return false
+        if (!isAdded || _binding == null) return false
+        if (!isResumed) return false
+        if (!this::adapter.isInitialized) return false
+        if (pendingRestorePosition != null) return false
+
+        val focused = activity?.currentFocus
+        if (focused != null && focused != binding.recycler && isDescendantOf(focused, binding.recycler)) {
+            pendingFocusFirstItemFromTabSwitch = false
+            return false
+        }
+
+        if (adapter.itemCount <= 0) {
+            binding.recycler.requestFocus()
+            return true
+        }
+
+        binding.recycler.post {
+            val vh = binding.recycler.findViewHolderForAdapterPosition(0)
+            if (vh != null) {
+                vh.itemView.requestFocus()
+                pendingFocusFirstItemFromTabSwitch = false
+                return@post
+            }
+            binding.recycler.scrollToPosition(0)
+            binding.recycler.post {
+                binding.recycler.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() ?: binding.recycler.requestFocus()
+                pendingFocusFirstItemFromTabSwitch = false
+            }
+        }
+        return true
     }
 
     private fun maybeTriggerInitialLoad() {
@@ -170,6 +212,7 @@ class MyBangumiFollowFragment : Fragment() {
                     return@launch
                 }
                 if (isRefresh) adapter.submit(res.items) else adapter.append(res.items)
+                binding.recycler.post { maybeConsumePendingFocusFirstItemFromTabSwitch() }
                 restoreFocusIfNeeded()
                 page++
                 if (res.pages > 0 && page > res.pages) endReached = true

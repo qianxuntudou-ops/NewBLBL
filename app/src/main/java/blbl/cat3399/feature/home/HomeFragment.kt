@@ -15,41 +15,25 @@ import blbl.cat3399.core.log.AppLog
 import blbl.cat3399.core.ui.enableDpadTabFocus
 import blbl.cat3399.databinding.FragmentHomeBinding
 import blbl.cat3399.feature.video.VideoGridFragment
+import blbl.cat3399.feature.video.VideoGridTabSwitchFocusHost
 
-class HomeFragment : Fragment() {
+class HomeFragment : Fragment(), VideoGridTabSwitchFocusHost {
     private var _binding: FragmentHomeBinding? = null
     private val binding get() = _binding!!
     private var pageCallback: androidx.viewpager2.widget.ViewPager2.OnPageChangeCallback? = null
+    private var pendingFocusFirstCardFromContentSwitch: Boolean = false
 
-    private fun focusCurrentPageFirstCard(): Boolean {
+    private fun requestCurrentPageFocusFromContentSwitch(): Boolean {
         val adapter = binding.viewPager.adapter as? FragmentStateAdapter ?: return false
         val position = binding.viewPager.currentItem
         val itemId = adapter.getItemId(position)
         val byTag = childFragmentManager.findFragmentByTag("f$itemId")
         val pageFragment =
-            if (byTag?.view?.findViewById<RecyclerView?>(R.id.recycler) != null) {
-                byTag
-            } else {
-                childFragmentManager.fragments.firstOrNull { it.isVisible && it.view?.findViewById<RecyclerView?>(R.id.recycler) != null }
+            when {
+                byTag is VideoGridFragment -> byTag
+                else -> childFragmentManager.fragments.firstOrNull { it.isVisible && it is VideoGridFragment } as? VideoGridFragment
             } ?: return false
-        val recycler = pageFragment.view?.findViewById<RecyclerView?>(R.id.recycler) ?: return false
-
-        recycler.post {
-            val vh = recycler.findViewHolderForAdapterPosition(0)
-            if (vh != null) {
-                vh.itemView.requestFocus()
-                return@post
-            }
-            if (recycler.adapter?.itemCount == 0) {
-                recycler.requestFocus()
-                return@post
-            }
-            recycler.scrollToPosition(0)
-            recycler.post {
-                recycler.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() ?: recycler.requestFocus()
-            }
-        }
-        return true
+        return pageFragment.requestFocusFirstCardFromContentSwitch()
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -73,7 +57,16 @@ class HomeFragment : Fragment() {
             for (i in 0 until tabStrip.childCount) {
                 tabStrip.getChildAt(i).setOnKeyListener { _, keyCode, event ->
                     if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
-                        return@setOnKeyListener focusCurrentPageFirstCard()
+                        val adapter = binding.viewPager.adapter as? FragmentStateAdapter ?: return@setOnKeyListener false
+                        val position = binding.viewPager.currentItem
+                        val itemId = adapter.getItemId(position)
+                        val byTag = childFragmentManager.findFragmentByTag("f$itemId")
+                        val pageFragment =
+                            when {
+                                byTag is VideoGridFragment -> byTag
+                                else -> childFragmentManager.fragments.firstOrNull { it.isVisible && it is VideoGridFragment } as? VideoGridFragment
+                            } ?: return@setOnKeyListener false
+                        return@setOnKeyListener pageFragment.requestFocusFirstCardFromTab()
                     }
                     false
                 }
@@ -83,9 +76,22 @@ class HomeFragment : Fragment() {
             object : androidx.viewpager2.widget.ViewPager2.OnPageChangeCallback() {
                 override fun onPageSelected(position: Int) {
                     AppLog.d("Home", "page selected pos=$position t=${SystemClock.uptimeMillis()}")
+                    if (pendingFocusFirstCardFromContentSwitch) {
+                        if (requestCurrentPageFocusFromContentSwitch()) {
+                            pendingFocusFirstCardFromContentSwitch = false
+                        }
+                    }
                 }
             }
         binding.viewPager.registerOnPageChangeCallback(pageCallback!!)
+    }
+
+    override fun requestFocusCurrentPageFirstCardFromContentSwitch(): Boolean {
+        pendingFocusFirstCardFromContentSwitch = true
+        if (requestCurrentPageFocusFromContentSwitch()) {
+            pendingFocusFirstCardFromContentSwitch = false
+        }
+        return true
     }
 
     override fun onDestroyView() {

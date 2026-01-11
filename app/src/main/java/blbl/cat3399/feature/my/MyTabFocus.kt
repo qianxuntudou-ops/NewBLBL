@@ -40,6 +40,34 @@ fun Fragment.switchToPrevMyTabIfAvailable(): Boolean {
     return true
 }
 
+fun Fragment.switchToNextMyTabFromContentEdge(): Boolean {
+    val tabLayout = myTabLayout() ?: return false
+    val tabStrip = tabLayout.getChildAt(0) as? ViewGroup ?: return false
+    val cur = tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
+    val next = cur + 1
+    if (next >= tabLayout.tabCount) return false
+    tabLayout.getTabAt(next)?.select() ?: return false
+    tabLayout.post {
+        (parentFragment as? MyTabContentSwitchFocusHost)?.requestFocusCurrentPageFirstItemFromContentSwitch()
+            ?: tabStrip.getChildAt(next)?.requestFocus()
+    }
+    return true
+}
+
+fun Fragment.switchToPrevMyTabFromContentEdge(): Boolean {
+    val tabLayout = myTabLayout() ?: return false
+    val tabStrip = tabLayout.getChildAt(0) as? ViewGroup ?: return false
+    val cur = tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
+    val prev = cur - 1
+    if (prev < 0) return false
+    tabLayout.getTabAt(prev)?.select() ?: return false
+    tabLayout.post {
+        (parentFragment as? MyTabContentSwitchFocusHost)?.requestFocusCurrentPageFirstItemFromContentSwitch()
+            ?: tabStrip.getChildAt(prev)?.requestFocus()
+    }
+    return true
+}
+
 fun isDescendantOf(view: View, ancestor: View): Boolean {
     var current: View? = view
     while (current != null) {
@@ -48,4 +76,3 @@ fun isDescendantOf(view: View, ancestor: View): Boolean {
     }
     return false
 }
-

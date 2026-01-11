@@ -42,6 +42,7 @@ class VideoGridFragment : Fragment() {
     private var requestToken: Int = 0
 
     private var pendingFocusFirstCardFromTab: Boolean = false
+    private var pendingFocusFirstCardFromContentSwitch: Boolean = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentVideoGridBinding.inflate(inflater, container, false)
@@ -106,11 +107,22 @@ class VideoGridFragment : Fragment() {
                                 false
                             }
 
+                            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                val itemView = binding.recycler.findContainingItemView(v) ?: return@setOnKeyListener false
+                                val next = FocusFinder.getInstance().findNextFocus(binding.recycler, itemView, View.FOCUS_LEFT)
+                                if (next == null || !isDescendantOf(next, binding.recycler)) {
+                                    val switched = switchToPrevTabFromContentEdge()
+                                    return@setOnKeyListener switched
+                                }
+                                false
+                            }
+
                             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                                 val itemView = binding.recycler.findContainingItemView(v) ?: return@setOnKeyListener false
                                 val next = FocusFinder.getInstance().findNextFocus(binding.recycler, itemView, View.FOCUS_RIGHT)
                                 if (next == null || !isDescendantOf(next, binding.recycler)) {
-                                    if (switchToNextTabIfAvailable()) return@setOnKeyListener true
+                                    if (switchToNextTabFromContentEdge()) return@setOnKeyListener true
+                                    return@setOnKeyListener true
                                 }
                                 false
                             }
@@ -159,7 +171,7 @@ class VideoGridFragment : Fragment() {
         AppLog.d("VideoGrid", "onResume source=$source rid=$rid t=${SystemClock.uptimeMillis()}")
         (binding.recycler.layoutManager as? GridLayoutManager)?.spanCount = spanCountForWidth()
         maybeTriggerInitialLoad()
-        maybeConsumePendingFocusFirstCardFromTab()
+        maybeConsumePendingFocusFirstCard()
     }
 
     private fun maybeTriggerInitialLoad() {
@@ -218,7 +230,7 @@ class VideoGridFragment : Fragment() {
                     adapter.append(filtered)
                 }
                 binding.recycler.post {
-                    maybeConsumePendingFocusFirstCardFromTab()
+                    maybeConsumePendingFocusFirstCard()
                 }
 
                 if (source == SRC_RECOMMEND) {
@@ -264,40 +276,55 @@ class VideoGridFragment : Fragment() {
     fun requestFocusFirstCardFromTab(): Boolean {
         pendingFocusFirstCardFromTab = true
         if (!isResumed) return true
-        return maybeConsumePendingFocusFirstCardFromTab()
+        return maybeConsumePendingFocusFirstCard()
     }
 
-    private fun maybeConsumePendingFocusFirstCardFromTab(): Boolean {
-        if (!pendingFocusFirstCardFromTab) return false
+    fun requestFocusFirstCardFromContentSwitch(): Boolean {
+        pendingFocusFirstCardFromContentSwitch = true
+        if (!isResumed) return true
+        return maybeConsumePendingFocusFirstCard()
+    }
+
+    private fun maybeConsumePendingFocusFirstCard(): Boolean {
+        if (!pendingFocusFirstCardFromTab && !pendingFocusFirstCardFromContentSwitch) return false
         if (!isAdded || _binding == null) return false
-        if (!isResumed) {
+        if (!isResumed) return false
+
+        val focused = activity?.currentFocus
+        if (focused != null && focused != binding.recycler && isDescendantOf(focused, binding.recycler)) {
             pendingFocusFirstCardFromTab = false
+            pendingFocusFirstCardFromContentSwitch = false
             return false
         }
 
-        val focused = activity?.currentFocus
         val parentView = parentFragment?.view
         val tabLayout =
             parentView?.findViewById<com.google.android.material.tabs.TabLayout?>(blbl.cat3399.R.id.tab_layout)
-        if (focused == null || tabLayout == null || !isDescendantOf(focused, tabLayout)) {
-            pendingFocusFirstCardFromTab = false
-            return false
+        if (pendingFocusFirstCardFromTab) {
+            if (focused == null || tabLayout == null || !isDescendantOf(focused, tabLayout)) {
+                pendingFocusFirstCardFromTab = false
+            }
         }
 
         if (!this::adapter.isInitialized) return false
-        if (adapter.itemCount <= 0) return true
+        if (adapter.itemCount <= 0) {
+            binding.recycler.requestFocus()
+            return true
+        }
 
         binding.recycler.post {
             val vh = binding.recycler.findViewHolderForAdapterPosition(0)
             if (vh != null) {
                 vh.itemView.requestFocus()
                 pendingFocusFirstCardFromTab = false
+                pendingFocusFirstCardFromContentSwitch = false
                 return@post
             }
             binding.recycler.scrollToPosition(0)
             binding.recycler.post {
                 binding.recycler.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus()
                 pendingFocusFirstCardFromTab = false
+                pendingFocusFirstCardFromContentSwitch = false
             }
         }
         return true
@@ -321,15 +348,35 @@ class VideoGridFragment : Fragment() {
         return false
     }
 
-    private fun switchToNextTabIfAvailable(): Boolean {
+    private fun switchToNextTabFromContentEdge(): Boolean {
         val parentView = parentFragment?.view ?: return false
         val tabLayout = parentView.findViewById<com.google.android.material.tabs.TabLayout?>(blbl.cat3399.R.id.tab_layout) ?: return false
         if (tabLayout.tabCount <= 1) return false
         val tabStrip = tabLayout.getChildAt(0) as? ViewGroup ?: return false
         val cur = tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
-        val next = (cur + 1) % tabLayout.tabCount
+        val next = cur + 1
+        if (next >= tabLayout.tabCount) return false
         tabLayout.getTabAt(next)?.select() ?: return false
-        tabLayout.post { tabStrip.getChildAt(next)?.requestFocus() }
+        tabLayout.post {
+            (parentFragment as? VideoGridTabSwitchFocusHost)?.requestFocusCurrentPageFirstCardFromContentSwitch()
+                ?: tabStrip.getChildAt(next)?.requestFocus()
+        }
+        return true
+    }
+
+    private fun switchToPrevTabFromContentEdge(): Boolean {
+        val parentView = parentFragment?.view ?: return false
+        val tabLayout = parentView.findViewById<com.google.android.material.tabs.TabLayout?>(blbl.cat3399.R.id.tab_layout) ?: return false
+        if (tabLayout.tabCount <= 1) return false
+        val tabStrip = tabLayout.getChildAt(0) as? ViewGroup ?: return false
+        val cur = tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
+        val prev = cur - 1
+        if (prev < 0) return false
+        tabLayout.getTabAt(prev)?.select() ?: return false
+        tabLayout.post {
+            (parentFragment as? VideoGridTabSwitchFocusHost)?.requestFocusCurrentPageFirstCardFromContentSwitch()
+                ?: tabStrip.getChildAt(prev)?.requestFocus()
+        }
         return true
     }
 

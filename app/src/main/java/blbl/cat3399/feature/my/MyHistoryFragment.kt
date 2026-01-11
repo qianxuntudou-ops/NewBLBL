@@ -21,7 +21,7 @@ import blbl.cat3399.feature.player.PlayerActivity
 import blbl.cat3399.feature.video.VideoCardAdapter
 import kotlinx.coroutines.launch
 
-class MyHistoryFragment : Fragment() {
+class MyHistoryFragment : Fragment(), MyTabSwitchFocusTarget {
     private var _binding: FragmentVideoGridBinding? = null
     private val binding get() = _binding!!
 
@@ -34,6 +34,7 @@ class MyHistoryFragment : Fragment() {
     private var initialLoadTriggered: Boolean = false
 
     private var cursor: BiliApi.HistoryCursor? = null
+    private var pendingFocusFirstItemFromTabSwitch: Boolean = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentVideoGridBinding.inflate(inflater, container, false)
@@ -93,7 +94,7 @@ class MyHistoryFragment : Fragment() {
                                 val itemView = binding.recycler.findContainingItemView(v) ?: return@setOnKeyListener false
                                 val next = FocusFinder.getInstance().findNextFocus(binding.recycler, itemView, View.FOCUS_LEFT)
                                 if (next == null || !isDescendantOf(next, binding.recycler)) {
-                                    val switched = switchToPrevMyTabIfAvailable()
+                                    val switched = switchToPrevMyTabFromContentEdge()
                                     return@setOnKeyListener switched
                                 }
                                 false
@@ -103,7 +104,7 @@ class MyHistoryFragment : Fragment() {
                                 val itemView = binding.recycler.findContainingItemView(v) ?: return@setOnKeyListener false
                                 val next = FocusFinder.getInstance().findNextFocus(binding.recycler, itemView, View.FOCUS_RIGHT)
                                 if (next == null || !isDescendantOf(next, binding.recycler)) {
-                                    if (switchToNextMyTabIfAvailable()) return@setOnKeyListener true
+                                    if (switchToNextMyTabFromContentEdge()) return@setOnKeyListener true
                                     return@setOnKeyListener true
                                 }
                                 false
@@ -136,6 +137,46 @@ class MyHistoryFragment : Fragment() {
         super.onResume()
         (binding.recycler.layoutManager as? GridLayoutManager)?.spanCount = spanCountForWidth(resources)
         maybeTriggerInitialLoad()
+        maybeConsumePendingFocusFirstItemFromTabSwitch()
+    }
+
+    override fun requestFocusFirstItemFromTabSwitch(): Boolean {
+        pendingFocusFirstItemFromTabSwitch = true
+        if (!isResumed) return true
+        return maybeConsumePendingFocusFirstItemFromTabSwitch()
+    }
+
+    private fun maybeConsumePendingFocusFirstItemFromTabSwitch(): Boolean {
+        if (!pendingFocusFirstItemFromTabSwitch) return false
+        if (!isAdded || _binding == null) return false
+        if (!isResumed) return false
+        if (!this::adapter.isInitialized) return false
+
+        val focused = activity?.currentFocus
+        if (focused != null && focused != binding.recycler && isDescendantOf(focused, binding.recycler)) {
+            pendingFocusFirstItemFromTabSwitch = false
+            return false
+        }
+
+        if (adapter.itemCount <= 0) {
+            binding.recycler.requestFocus()
+            return true
+        }
+
+        binding.recycler.post {
+            val vh = binding.recycler.findViewHolderForAdapterPosition(0)
+            if (vh != null) {
+                vh.itemView.requestFocus()
+                pendingFocusFirstItemFromTabSwitch = false
+                return@post
+            }
+            binding.recycler.scrollToPosition(0)
+            binding.recycler.post {
+                binding.recycler.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() ?: binding.recycler.requestFocus()
+                pendingFocusFirstItemFromTabSwitch = false
+            }
+        }
+        return true
     }
 
     private fun maybeTriggerInitialLoad() {
@@ -184,6 +225,7 @@ class MyHistoryFragment : Fragment() {
 
                 val filtered = page.items.filter { loadedBvids.add(it.bvid) }
                 if (isRefresh) adapter.submit(filtered) else adapter.append(filtered)
+                binding.recycler.post { maybeConsumePendingFocusFirstItemFromTabSwitch() }
 
                 if (filtered.isEmpty()) endReached = true
             } catch (t: Throwable) {

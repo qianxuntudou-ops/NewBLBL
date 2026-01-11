@@ -48,6 +48,7 @@ class SearchFragment : Fragment(), BackPressHandler {
 
     private var currentTabIndex: Int = 0
     private var currentOrder: Order = Order.TotalRank
+    private var pendingFocusFirstResultCardFromTabSwitch: Boolean = false
 
     private val loadedBvids = HashSet<String>()
     private var isLoadingMore: Boolean = false
@@ -332,11 +333,22 @@ class SearchFragment : Fragment(), BackPressHandler {
 	                                false
 	                            }
 
+	                            KeyEvent.KEYCODE_DPAD_LEFT -> {
+	                                val itemView = binding.recyclerResults.findContainingItemView(v) ?: return@setOnKeyListener false
+	                                val next = FocusFinder.getInstance().findNextFocus(binding.recyclerResults, itemView, View.FOCUS_LEFT)
+	                                if (next == null || !isDescendantOf(next, binding.recyclerResults)) {
+	                                    val switched = switchToPrevTabFromContentEdge()
+	                                    return@setOnKeyListener switched
+	                                }
+	                                false
+	                            }
+
 	                            KeyEvent.KEYCODE_DPAD_RIGHT -> {
 	                                val itemView = binding.recyclerResults.findContainingItemView(v) ?: return@setOnKeyListener false
 	                                val next = FocusFinder.getInstance().findNextFocus(binding.recyclerResults, itemView, View.FOCUS_RIGHT)
 	                                if (next == null || !isDescendantOf(next, binding.recyclerResults)) {
-	                                    if (switchToNextTabIfAvailable()) return@setOnKeyListener true
+	                                    if (switchToNextTabFromContentEdge()) return@setOnKeyListener true
+	                                    return@setOnKeyListener true
 	                                }
 	                                false
 	                            }
@@ -573,31 +585,93 @@ class SearchFragment : Fragment(), BackPressHandler {
 	    private fun focusFirstResultCardFromTab(): Boolean {
 	        if (binding.panelResults.visibility != View.VISIBLE) return false
 	        if (currentTabIndex != 0) return true
-	        if (resultAdapter.itemCount <= 0) return true
-	        binding.recyclerResults.post {
-	            val vh = binding.recyclerResults.findViewHolderForAdapterPosition(0)
-	            if (vh != null) {
-	                vh.itemView.requestFocus()
-	                return@post
-	            }
-	            binding.recyclerResults.scrollToPosition(0)
-	            binding.recyclerResults.post {
-	                binding.recyclerResults.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() ?: binding.recyclerResults.requestFocus()
-	            }
-	        }
-	        return true
+            pendingFocusFirstResultCardFromTabSwitch = true
+            if (!isResumed) return true
+            return maybeConsumePendingFocusFirstResultCardFromTabSwitch()
 	    }
 
-	    private fun switchToNextTabIfAvailable(): Boolean {
+        private fun requestFocusResultsContentFromTabSwitch(): Boolean {
+            if (binding.panelResults.visibility != View.VISIBLE) return false
+            return if (currentTabIndex == 0) {
+                requestFocusFirstResultCardFromTabSwitch()
+            } else {
+                binding.panelResults.post {
+                    binding.tvResultsPlaceholder.requestFocus()
+                }
+                true
+            }
+        }
+
+        private fun requestFocusFirstResultCardFromTabSwitch(): Boolean {
+            pendingFocusFirstResultCardFromTabSwitch = true
+            if (!isResumed) return true
+            return maybeConsumePendingFocusFirstResultCardFromTabSwitch()
+        }
+
+        private fun maybeConsumePendingFocusFirstResultCardFromTabSwitch(): Boolean {
+            if (!pendingFocusFirstResultCardFromTabSwitch) return false
+            if (_binding == null || !isAdded || !isResumed) return false
+            if (binding.panelResults.visibility != View.VISIBLE || currentTabIndex != 0) {
+                pendingFocusFirstResultCardFromTabSwitch = false
+                return false
+            }
+
+            val focused = activity?.currentFocus
+            if (focused != null && isDescendantOf(focused, binding.recyclerResults) && focused != binding.recyclerResults) {
+                pendingFocusFirstResultCardFromTabSwitch = false
+                return false
+            }
+
+            if (resultAdapter.itemCount <= 0) {
+                binding.recyclerResults.requestFocus()
+                return true
+            }
+
+            binding.recyclerResults.post {
+                val vh = binding.recyclerResults.findViewHolderForAdapterPosition(0)
+                if (vh != null) {
+                    vh.itemView.requestFocus()
+                    pendingFocusFirstResultCardFromTabSwitch = false
+                    return@post
+                }
+                binding.recyclerResults.scrollToPosition(0)
+                binding.recyclerResults.post {
+                    binding.recyclerResults.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() ?: binding.recyclerResults.requestFocus()
+                    pendingFocusFirstResultCardFromTabSwitch = false
+                }
+            }
+            return true
+        }
+
+	    private fun switchToNextTabFromContentEdge(): Boolean {
 	        if (binding.panelResults.visibility != View.VISIBLE) return false
 	        if (binding.tabLayout.tabCount <= 1) return false
 	        val tabStrip = binding.tabLayout.getChildAt(0) as? ViewGroup ?: return false
 	        val cur = binding.tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
-	        val next = (cur + 1) % binding.tabLayout.tabCount
+	        val next = cur + 1
+            if (next >= binding.tabLayout.tabCount) return false
 	        binding.tabLayout.getTabAt(next)?.select() ?: return false
-	        binding.tabLayout.post { tabStrip.getChildAt(next)?.requestFocus() }
+	        binding.tabLayout.post {
+                requestFocusResultsContentFromTabSwitch()
+                    || tabStrip.getChildAt(next)?.requestFocus() == true
+            }
 	        return true
 	    }
+
+        private fun switchToPrevTabFromContentEdge(): Boolean {
+            if (binding.panelResults.visibility != View.VISIBLE) return false
+            if (binding.tabLayout.tabCount <= 1) return false
+            val tabStrip = binding.tabLayout.getChildAt(0) as? ViewGroup ?: return false
+            val cur = binding.tabLayout.selectedTabPosition.takeIf { it >= 0 } ?: 0
+            val prev = cur - 1
+            if (prev < 0) return false
+            binding.tabLayout.getTabAt(prev)?.select() ?: return false
+            binding.tabLayout.post {
+                requestFocusResultsContentFromTabSwitch()
+                    || tabStrip.getChildAt(prev)?.requestFocus() == true
+            }
+            return true
+        }
 
 	    private fun isDescendantOf(view: View, ancestor: View): Boolean {
 	        var current: View? = view
@@ -704,6 +778,7 @@ class SearchFragment : Fragment(), BackPressHandler {
 
 	                val filtered = list.filter { loadedBvids.add(it.bvid) }
 	                if (page == 1) resultAdapter.submit(filtered) else resultAdapter.append(filtered)
+                    binding.recyclerResults.post { maybeConsumePendingFocusFirstResultCardFromTabSwitch() }
 	                page++
 
                 if (res.pages in 1..page && page > res.pages) endReached = true
@@ -758,6 +833,7 @@ class SearchFragment : Fragment(), BackPressHandler {
     override fun onResume() {
         super.onResume()
         (binding.recyclerResults.layoutManager as? GridLayoutManager)?.spanCount = spanCountForWidth()
+        maybeConsumePendingFocusFirstResultCardFromTabSwitch()
     }
 
     override fun onDestroyView() {

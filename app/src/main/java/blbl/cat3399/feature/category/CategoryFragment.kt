@@ -14,11 +14,13 @@ import blbl.cat3399.core.model.Zone
 import blbl.cat3399.core.ui.enableDpadTabFocus
 import blbl.cat3399.databinding.FragmentCategoryBinding
 import blbl.cat3399.feature.video.VideoGridFragment
+import blbl.cat3399.feature.video.VideoGridTabSwitchFocusHost
 
-class CategoryFragment : Fragment() {
+class CategoryFragment : Fragment(), VideoGridTabSwitchFocusHost {
     private var _binding: FragmentCategoryBinding? = null
     private val binding get() = _binding!!
     private var pageCallback: androidx.viewpager2.widget.ViewPager2.OnPageChangeCallback? = null
+    private var pendingFocusFirstCardFromContentSwitch: Boolean = false
 
     private val zones: List<Zone> = listOf(
         Zone("全站", null),
@@ -76,6 +78,11 @@ class CategoryFragment : Fragment() {
                         "Category",
                         "page selected pos=$position title=${zone?.title} tid=${zone?.tid} t=${SystemClock.uptimeMillis()}",
                     )
+                    if (pendingFocusFirstCardFromContentSwitch) {
+                        if (focusCurrentPageFirstCardFromContentSwitch()) {
+                            pendingFocusFirstCardFromContentSwitch = false
+                        }
+                    }
                 }
             }
         binding.viewPager.registerOnPageChangeCallback(pageCallback!!)
@@ -92,6 +99,27 @@ class CategoryFragment : Fragment() {
                 else -> childFragmentManager.fragments.firstOrNull { it.isVisible && it is VideoGridFragment } as? VideoGridFragment
             } ?: return false
         return pageFragment.requestFocusFirstCardFromTab()
+    }
+
+    private fun focusCurrentPageFirstCardFromContentSwitch(): Boolean {
+        val pagerAdapter = binding.viewPager.adapter as? FragmentStateAdapter ?: return false
+        val position = binding.viewPager.currentItem
+        val itemId = pagerAdapter.getItemId(position)
+        val byTag = childFragmentManager.findFragmentByTag("f$itemId")
+        val pageFragment =
+            when {
+                byTag is VideoGridFragment -> byTag
+                else -> childFragmentManager.fragments.firstOrNull { it.isVisible && it is VideoGridFragment } as? VideoGridFragment
+            } ?: return false
+        return pageFragment.requestFocusFirstCardFromContentSwitch()
+    }
+
+    override fun requestFocusCurrentPageFirstCardFromContentSwitch(): Boolean {
+        pendingFocusFirstCardFromContentSwitch = true
+        if (focusCurrentPageFirstCardFromContentSwitch()) {
+            pendingFocusFirstCardFromContentSwitch = false
+        }
+        return true
     }
 
     override fun onDestroyView() {
