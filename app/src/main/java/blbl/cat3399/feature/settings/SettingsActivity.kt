@@ -150,7 +150,7 @@ class SettingsActivity : AppCompatActivity() {
 
             "播放设置" -> listOf(
                 SettingEntry("默认画质", qnText(prefs.playerPreferredQn), "按 B 站 qn 清晰度选择（DASH 走轨道 id）"),
-                SettingEntry("默认音轨", audioText(prefs.playerPreferredAudioId), "30280/30232/30216"),
+                SettingEntry("默认音轨", audioText(prefs.playerPreferredAudioId), "30280/30232/30216/30250/30251"),
                 SettingEntry("默认播放速度", String.format(Locale.US, "%.2fx", prefs.playerSpeed), null),
                 SettingEntry("字幕语言", subtitleLangText(prefs.subtitlePreferredLang), "自动/优先匹配"),
                 SettingEntry("默认开启字幕", if (prefs.subtitleEnabledDefault) "开" else "关", "进入播放页时默认状态"),
@@ -396,7 +396,7 @@ class SettingsActivity : AppCompatActivity() {
 
             "默认画质" -> {
                 val options =
-                    listOf(16, 32, 64, 74, 80, 112, 116, 120, 127).map { it to qnText(it) }
+                    listOf(16, 32, 64, 74, 80, 100, 112, 116, 120, 125, 126, 127, 129).map { it to qnText(it) }
                 showChoiceDialog(
                     title = "默认画质(qn)",
                     items = options.map { it.second },
@@ -409,7 +409,7 @@ class SettingsActivity : AppCompatActivity() {
             }
 
             "默认音轨" -> {
-                val options = listOf(30280, 30232, 30216)
+                val options = listOf(30251, 30250, 30280, 30232, 30216)
                 showChoiceDialog(
                     title = "默认音轨",
                     items = options.map { audioText(it) },
@@ -648,6 +648,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun audioText(id: Int): String = when (id) {
+        30251 -> "30251 Hi-Res 无损"
+        30250 -> "30250 杜比全景声"
         30280 -> "30280 192K"
         30232 -> "30232 132K"
         30216 -> "30216 64K"

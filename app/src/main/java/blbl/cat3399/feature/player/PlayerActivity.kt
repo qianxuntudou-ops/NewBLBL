@@ -22,6 +22,7 @@ import androidx.media3.ui.SubtitleView
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -85,6 +86,9 @@ class PlayerActivity : AppCompatActivity() {
     private val danmakuLoadingSegments = HashSet<Int>()
     private val danmakuAll = ArrayList<blbl.cat3399.core.model.Danmaku>()
     private var lastDanmakuPrefetchAtMs: Long = 0L
+    private var playbackConstraints: PlaybackConstraints = PlaybackConstraints()
+    private var decodeFallbackAttempted: Boolean = false
+    private var lastPickedDash: Playable.Dash? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -138,6 +142,22 @@ class PlayerActivity : AppCompatActivity() {
         exo.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 AppLog.e("Player", "onPlayerError", error)
+                val picked = lastPickedDash
+                if (
+                    picked != null &&
+                    !decodeFallbackAttempted &&
+                    picked.shouldAttemptDolbyFallback() &&
+                    isLikelyCodecUnsupported(error)
+                ) {
+                    val nextConstraints = nextPlaybackConstraintsForDolbyFallback(picked)
+                    if (nextConstraints != null) {
+                        decodeFallbackAttempted = true
+                        playbackConstraints = nextConstraints
+                        Toast.makeText(this@PlayerActivity, "杜比/无损解码失败，尝试回退到普通轨道…", Toast.LENGTH_SHORT).show()
+                        reloadStream(keepPosition = true, resetConstraints = false)
+                        return
+                    }
+                }
                 Toast.makeText(this@PlayerActivity, "播放失败：${error.errorCodeName}", Toast.LENGTH_SHORT).show()
             }
 
@@ -203,18 +223,26 @@ class PlayerActivity : AppCompatActivity() {
                 val playJson = playJob.await()
                 showRiskControlBypassHintIfNeeded(playJson)
                 lastAvailableQns = parseDashVideoQnList(playJson)
-                val playable = pickPlayable(playJson)
+                playbackConstraints = PlaybackConstraints()
+                decodeFallbackAttempted = false
+                lastPickedDash = null
+                val playable = pickPlayable(playJson, playbackConstraints)
                 subtitleConfig = subJob.await()
                 subtitleAvailable = subtitleConfig != null
                 (binding.recyclerSettings.adapter as? PlayerSettingsAdapter)?.let { refreshSettings(it) }
                 applySubtitleEnabled(exo)
                 when (playable) {
                     is Playable.Dash -> {
-                        AppLog.i("Player", "picked DASH qn=${playable.qn} codecid=${playable.codecid} video=${playable.videoUrl.take(40)}")
+                        lastPickedDash = playable
+                        AppLog.i(
+                            "Player",
+                            "picked DASH qn=${playable.qn} codecid=${playable.codecid} dv=${playable.isDolbyVision} a=${playable.audioKind}(${playable.audioId}) video=${playable.videoUrl.take(40)}",
+                        )
                         exo.setMediaSource(buildMerged(okHttpFactory, playable.videoUrl, playable.audioUrl, subtitleConfig))
                         applyResolutionFallbackIfNeeded(requestedQn = session.targetQn, actualQn = playable.qn)
                     }
                     is Playable.Progressive -> {
+                        lastPickedDash = null
                         AppLog.i("Player", "picked Progressive url=${playable.url.take(60)}")
                         exo.setMediaSource(buildProgressive(okHttpFactory, playable.url, subtitleConfig))
                     }
@@ -806,9 +834,52 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private sealed interface Playable {
-        data class Dash(val videoUrl: String, val audioUrl: String, val qn: Int, val codecid: Int) : Playable
+        data class Dash(
+            val videoUrl: String,
+            val audioUrl: String,
+            val qn: Int,
+            val codecid: Int,
+            val audioId: Int,
+            val audioKind: DashAudioKind,
+            val isDolbyVision: Boolean,
+        ) : Playable
+
         data class Progressive(val url: String) : Playable
     }
+
+    private enum class DashAudioKind { NORMAL, DOLBY, FLAC }
+
+    private data class PlaybackConstraints(
+        val allowDolbyVision: Boolean = true,
+        val allowDolbyAudio: Boolean = true,
+        val allowFlacAudio: Boolean = true,
+    )
+
+    private fun Playable.Dash.shouldAttemptDolbyFallback(): Boolean =
+        isDolbyVision || audioKind == DashAudioKind.DOLBY || audioKind == DashAudioKind.FLAC
+
+    private fun nextPlaybackConstraintsForDolbyFallback(picked: Playable.Dash): PlaybackConstraints? {
+        if (picked.isDolbyVision && playbackConstraints.allowDolbyVision) return playbackConstraints.copy(allowDolbyVision = false)
+        if (picked.audioKind == DashAudioKind.DOLBY && playbackConstraints.allowDolbyAudio) return playbackConstraints.copy(allowDolbyAudio = false)
+        if (picked.audioKind == DashAudioKind.FLAC && playbackConstraints.allowFlacAudio) return playbackConstraints.copy(allowFlacAudio = false)
+        return null
+    }
+
+    private fun isLikelyCodecUnsupported(error: PlaybackException): Boolean {
+        val name = error.errorCodeName.uppercase(Locale.US)
+        return name.contains("DECOD") || name.contains("DECODER") || name.contains("FORMAT")
+    }
+
+    private val deviceSupportsDolbyVision: Boolean by lazy {
+        hasDecoder(MimeTypes.VIDEO_DOLBY_VISION)
+    }
+
+    private fun hasDecoder(mimeType: String): Boolean =
+        try {
+            MediaCodecUtil.getDecoderInfos(mimeType, /* secure= */ false, /* tunneling= */ false).isNotEmpty()
+        } catch (_: Throwable) {
+            false
+        }
 
     private fun refreshSettings(adapter: PlayerSettingsAdapter) {
         adapter.submit(
@@ -826,12 +897,14 @@ class PlayerActivity : AppCompatActivity() {
         )
     }
 
-    private suspend fun pickPlayable(json: JSONObject): Playable {
+    private suspend fun pickPlayable(json: JSONObject, constraints: PlaybackConstraints): Playable {
         val data = json.optJSONObject("data") ?: JSONObject()
         val dash = data.optJSONObject("dash")
         if (dash != null) {
             val videos = dash.optJSONArray("video") ?: JSONArray()
             val audios = dash.optJSONArray("audio") ?: JSONArray()
+            val dolby = dash.optJSONObject("dolby")
+            val flac = dash.optJSONObject("flac")
 
             fun baseUrl(obj: JSONObject): String =
                 obj.optString("baseUrl", obj.optString("base_url", obj.optString("url", "")))
@@ -848,7 +921,15 @@ class PlayerActivity : AppCompatActivity() {
                 return v.optInt("quality", 0).takeIf { it > 0 } ?: 0
             }
 
-            val videoItems = buildList {
+            fun isDolbyVisionTrack(v: JSONObject): Boolean {
+                if (qnOf(v) == 126) return true
+                val mime = v.optString("mimeType", v.optString("mime_type", "")).lowercase(Locale.US)
+                if (mime.contains("dolby-vision")) return true
+                val codecs = v.optString("codecs", "").lowercase(Locale.US)
+                return codecs.startsWith("dvhe") || codecs.startsWith("dvh1") || codecs.contains("dovi")
+            }
+
+            val rawVideoItems = buildList {
                 for (i in 0 until videos.length()) {
                     val v = videos.optJSONObject(i) ?: continue
                     if (baseUrl(v).isBlank()) continue
@@ -857,6 +938,11 @@ class PlayerActivity : AppCompatActivity() {
                     add(v)
                 }
             }
+
+            val videoItems =
+                rawVideoItems.filterNot { v ->
+                    isDolbyVisionTrack(v) && (!constraints.allowDolbyVision || !deviceSupportsDolbyVision)
+                }
 
             val availableQns = videoItems.map { qnOf(it) }.filter { it > 0 }.distinct()
 
@@ -904,25 +990,54 @@ class PlayerActivity : AppCompatActivity() {
                 val videoUrl = baseUrl(picked)
                 val pickedQnFinal = qnOf(picked)
                 val pickedCodecid = picked.optInt("codecid", 0)
+                val pickedIsDolbyVision = isDolbyVisionTrack(picked)
 
-                var bestAudio: JSONObject? = null
-                var bestAudioScore = -1L
-                for (i in 0 until audios.length()) {
-                    val a = audios.optJSONObject(i) ?: continue
-                    val id = a.optInt("id", 0)
-                    val bw = a.optLong("bandwidth", 0L)
-                    val score = bw + if (id == session.preferAudioId) 10_000_000L else 0L
-                    if (score > bestAudioScore && baseUrl(a).isNotBlank()) {
-                        bestAudioScore = score
-                        bestAudio = a
+                data class AudioCandidate(val obj: JSONObject, val kind: DashAudioKind, val id: Int, val bandwidth: Long)
+
+                val allAudioCandidates = buildList<AudioCandidate> {
+                    for (i in 0 until audios.length()) {
+                        val a = audios.optJSONObject(i) ?: continue
+                        if (baseUrl(a).isBlank()) continue
+                        add(AudioCandidate(a, DashAudioKind.NORMAL, a.optInt("id", 0), a.optLong("bandwidth", 0L)))
+                    }
+                    val dolbyAudios = dolby?.optJSONArray("audio")
+                    if (dolbyAudios != null && constraints.allowDolbyAudio) {
+                        for (i in 0 until dolbyAudios.length()) {
+                            val a = dolbyAudios.optJSONObject(i) ?: continue
+                            if (baseUrl(a).isBlank()) continue
+                            add(AudioCandidate(a, DashAudioKind.DOLBY, a.optInt("id", 0), a.optLong("bandwidth", 0L)))
+                        }
+                    }
+                    val flacAudio = flac?.optJSONObject("audio")
+                    if (flacAudio != null && constraints.allowFlacAudio && baseUrl(flacAudio).isNotBlank()) {
+                        add(AudioCandidate(flacAudio, DashAudioKind.FLAC, flacAudio.optInt("id", 0), flacAudio.optLong("bandwidth", 0L)))
                     }
                 }
-                val audioPicked = bestAudio
+
+                val audioPool =
+                    when (session.preferAudioId) {
+                        30250 -> allAudioCandidates.filter { it.kind == DashAudioKind.DOLBY }.ifEmpty { allAudioCandidates }
+                        30251 -> allAudioCandidates.filter { it.kind == DashAudioKind.FLAC }.ifEmpty { allAudioCandidates }
+                        else -> allAudioCandidates.filter { it.kind == DashAudioKind.NORMAL }.ifEmpty { allAudioCandidates }
+                    }
+
+                val audioPicked =
+                    audioPool.maxWithOrNull(
+                        compareBy<AudioCandidate> { it.bandwidth }.thenBy { if (it.id == session.preferAudioId) 1 else 0 },
+                    )
                 if (audioPicked == null) {
                     AppLog.w("Player", "no DASH audio track picked; fallback to durl if possible")
                 } else {
-                    val audioUrl = baseUrl(audioPicked)
-                    return Playable.Dash(videoUrl, audioUrl, qn = pickedQnFinal, codecid = pickedCodecid)
+                    val audioUrl = baseUrl(audioPicked.obj)
+                    return Playable.Dash(
+                        videoUrl = videoUrl,
+                        audioUrl = audioUrl,
+                        qn = pickedQnFinal,
+                        codecid = pickedCodecid,
+                        audioId = audioPicked.id,
+                        audioKind = audioPicked.kind,
+                        isDolbyVision = pickedIsDolbyVision,
+                    )
                 }
             }
         }
@@ -1008,7 +1123,7 @@ class PlayerActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun reloadStream(keepPosition: Boolean) {
+    private fun reloadStream(keepPosition: Boolean, resetConstraints: Boolean = true) {
         val exo = player ?: return
         val cid = currentCid
         val bvid = currentBvid
@@ -1020,14 +1135,23 @@ class PlayerActivity : AppCompatActivity() {
                 val playJson = BiliApi.playUrlDash(bvid, cid, qn = qn, fnval = fnval)
                 showRiskControlBypassHintIfNeeded(playJson)
                 lastAvailableQns = parseDashVideoQnList(playJson)
-                val playable = pickPlayable(playJson)
+                if (resetConstraints) {
+                    playbackConstraints = PlaybackConstraints()
+                    decodeFallbackAttempted = false
+                    lastPickedDash = null
+                }
+                val playable = pickPlayable(playJson, playbackConstraints)
                 val okHttpFactory = OkHttpDataSource.Factory(BiliClient.cdnOkHttp)
                 when (playable) {
                     is Playable.Dash -> {
+                        lastPickedDash = playable
                         exo.setMediaSource(buildMerged(okHttpFactory, playable.videoUrl, playable.audioUrl, subtitleConfig))
                         applyResolutionFallbackIfNeeded(requestedQn = session.targetQn, actualQn = playable.qn)
                     }
-                    is Playable.Progressive -> exo.setMediaSource(buildProgressive(okHttpFactory, playable.url, subtitleConfig))
+                    is Playable.Progressive -> {
+                        lastPickedDash = null
+                        exo.setMediaSource(buildProgressive(okHttpFactory, playable.url, subtitleConfig))
+                    }
                 }
                 exo.prepare()
                 applySubtitleEnabled(exo)
@@ -1588,7 +1712,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun buildResolutionOptions(): List<String> {
         // Follow docs: qn list for resolution/framerate.
-        val docQns = listOf(16, 32, 64, 74, 80, 112, 116, 120, 127)
+        val docQns = listOf(16, 32, 64, 74, 80, 100, 112, 116, 120, 125, 126, 127, 129)
         val available = lastAvailableQns.toSet()
         return buildList {
             add("自动(${qnLabel(session.preferredQn)})")
@@ -1612,10 +1736,14 @@ class PlayerActivity : AppCompatActivity() {
         64 -> "720P 高清"
         74 -> "720P60 高帧率"
         80 -> "1080P 高清"
+        100 -> "智能修复"
         112 -> "1080P+ 高码率"
         116 -> "1080P60 高帧率"
         120 -> "4K 超清"
+        125 -> "HDR 真彩色"
+        126 -> "杜比视界"
         127 -> "8K 超高清"
+        129 -> "HDR Vivid"
         else -> "qn $qn"
     }
 
