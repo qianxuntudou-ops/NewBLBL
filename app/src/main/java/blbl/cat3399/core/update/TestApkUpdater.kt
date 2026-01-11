@@ -3,6 +3,7 @@ package blbl.cat3399.core.update
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
+import blbl.cat3399.BuildConfig
 import blbl.cat3399.core.net.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -17,7 +18,10 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 object TestApkUpdater {
-    const val TEST_APK_URL = "http://8.152.215.14:13901/app-debug.apk"
+    private const val DEBUG_APK_URL = "http://8.152.215.14:13901/app-debug.apk"
+    private const val RELEASE_APK_URL = "http://8.152.215.14:13901/app-release.apk"
+    val TEST_APK_URL: String
+        get() = if (BuildConfig.DEBUG) DEBUG_APK_URL else RELEASE_APK_URL
 
     private const val COOLDOWN_MS = 5_000L
     private const val MAX_BYTES_PER_SECOND: Long = 2L * 1024 * 1024
