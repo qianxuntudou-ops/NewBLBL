@@ -7,6 +7,9 @@ on:
         description: "Version name (e.g. 0.1.1)"
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   build-debug:
     runs-on: ubuntu-latest
@@ -26,3 +29,13 @@ jobs:
         with:
           name: app-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish debug APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_NAME: ${{ inputs.version_name }}
+          RELEASE_TAG: ${{ startsWith(inputs.version_name, 'v') && inputs.version_name || format('v{0}', inputs.version_name) }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --generate-notes --target "$GITHUB_SHA"
+          fi
+          gh release upload "$RELEASE_TAG" "app/build/outputs/apk/debug/app-debug.apk#blbl-android-${VERSION_NAME}-debug.apk" --clobber
