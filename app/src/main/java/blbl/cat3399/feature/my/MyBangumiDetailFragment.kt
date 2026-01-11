@@ -97,7 +97,9 @@ class MyBangumiDetailFragment : Fragment() {
         startActivity(
             Intent(requireContext(), PlayerActivity::class.java)
                 .putExtra(PlayerActivity.EXTRA_BVID, bvid)
-                .putExtra(PlayerActivity.EXTRA_CID, cid),
+                .putExtra(PlayerActivity.EXTRA_CID, cid)
+                .putExtra(PlayerActivity.EXTRA_EP_ID, ep.epId)
+                .apply { ep.aid?.let { putExtra(PlayerActivity.EXTRA_AID, it) } },
         )
     }
 

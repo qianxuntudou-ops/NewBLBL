@@ -175,4 +175,9 @@ object BiliClient {
         val signed = WbiSigner.signQuery(params, keys, nowEpochSec)
         return withQuery(base, signed)
     }
+
+    fun signedWbiUrlAbsolute(url: String, params: Map<String, String>, keys: WbiSigner.Keys, nowEpochSec: Long = System.currentTimeMillis() / 1000): String {
+        val signed = WbiSigner.signQuery(params, keys, nowEpochSec)
+        return withQuery(url, signed)
+    }
 }

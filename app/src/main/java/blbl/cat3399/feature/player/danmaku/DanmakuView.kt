@@ -50,6 +50,13 @@ class DanmakuView @JvmOverloads constructor(
         invalidate()
     }
 
+    fun appendDanmakus(list: List<Danmaku>, maxItems: Int = 0) {
+        if (list.isEmpty()) return
+        engine.appendDanmakus(list)
+        if (maxItems > 0) engine.trimToMax(maxItems)
+        invalidate()
+    }
+
     fun notifySeek(positionMs: Long) {
         engine.seekTo(positionMs)
         lastPositionMs = positionMs

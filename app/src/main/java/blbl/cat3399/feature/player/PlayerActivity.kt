@@ -37,6 +37,7 @@ import blbl.cat3399.core.ui.Immersive
 import blbl.cat3399.databinding.ActivityPlayerBinding
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -74,6 +75,8 @@ class PlayerActivity : AppCompatActivity() {
 
     private var currentBvid: String = ""
     private var currentCid: Long = -1L
+    private var currentEpId: Long? = null
+    private var currentAid: Long? = null
     private lateinit var session: PlayerSessionSettings
     private var subtitleAvailable: Boolean = false
     private var subtitleConfig: MediaItem.SubtitleConfiguration? = null
@@ -103,12 +106,16 @@ class PlayerActivity : AppCompatActivity() {
 
         val bvid = intent.getStringExtra(EXTRA_BVID).orEmpty()
         val cidExtra = intent.getLongExtra(EXTRA_CID, -1L).takeIf { it > 0 }
+        val epIdExtra = intent.getLongExtra(EXTRA_EP_ID, -1L).takeIf { it > 0 }
+        val aidExtra = intent.getLongExtra(EXTRA_AID, -1L).takeIf { it > 0 }
         if (bvid.isBlank()) {
             Toast.makeText(this, "缺少 bvid", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
         currentBvid = bvid
+        currentEpId = epIdExtra
+        currentAid = aidExtra
 
         val prefs = BiliClient.prefs
         session = PlayerSessionSettings(
@@ -200,24 +207,32 @@ class PlayerActivity : AppCompatActivity() {
 
         initControls(exo)
 
-        lifecycleScope.launch {
+        val uncaughtHandler =
+            CoroutineExceptionHandler { _, t ->
+                AppLog.e("Player", "uncaught", t)
+                Toast.makeText(this@PlayerActivity, "播放失败：${t.message}", Toast.LENGTH_LONG).show()
+                finish()
+            }
+
+        lifecycleScope.launch(uncaughtHandler) {
             try {
-                val viewJson = async(Dispatchers.IO) { BiliApi.view(bvid) }
-                val viewData = viewJson.await().optJSONObject("data") ?: JSONObject()
+                val viewJson = async(Dispatchers.IO) { runCatching { BiliApi.view(bvid) }.getOrNull() }
+                val viewData = viewJson.await()?.optJSONObject("data") ?: JSONObject()
                 val title = viewData.optString("title", "")
                 if (title.isNotBlank()) binding.tvTitle.text = title
 
                 val cid = cidExtra ?: viewData.optLong("cid").takeIf { it > 0 } ?: error("cid missing")
                 val aid = viewData.optLong("aid").takeIf { it > 0 }
+                currentAid = currentAid ?: aid
                 currentCid = cid
                 AppLog.i("Player", "start bvid=$bvid cid=$cid")
 
                 val playJob =
                     async {
                         val (qn, fnval) = playUrlParamsForSession()
-                        BiliApi.playUrlDash(bvid, cid, qn = qn, fnval = fnval)
+                        requestPlayUrlWithFallback(bvid = bvid, cid = cid, epId = currentEpId, qn = qn, fnval = fnval)
                     }
-                val dmJob = async(Dispatchers.IO) { prepareDanmakuMeta(cid, aid) }
+                val dmJob = async(Dispatchers.IO) { prepareDanmakuMeta(cid, currentAid ?: aid) }
                 val subJob = async(Dispatchers.IO) { prepareSubtitleConfig(viewData, bvid, cid) }
 
                 val playJson = playJob.await()
@@ -259,6 +274,25 @@ class PlayerActivity : AppCompatActivity() {
                 if (!handlePlayUrlErrorIfNeeded(t)) {
                     Toast.makeText(this@PlayerActivity, "加载播放信息失败：${t.message}", Toast.LENGTH_LONG).show()
                 }
+            }
+        }
+    }
+
+    private suspend fun requestPlayUrlWithFallback(
+        bvid: String,
+        cid: Long,
+        epId: Long?,
+        qn: Int,
+        fnval: Int,
+    ): JSONObject {
+        return try {
+            BiliApi.playUrlDash(bvid = bvid, cid = cid, qn = qn, fnval = fnval)
+        } catch (t: Throwable) {
+            val e = t as? BiliApiException
+            if (e != null && epId != null && epId > 0 && (e.apiCode == -404 || e.apiCode == -400)) {
+                BiliApi.pgcPlayUrl(bvid = bvid, cid = cid, epId = epId, qn = qn, fnval = fnval)
+            } else {
+                throw t
             }
         }
     }
@@ -898,7 +932,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private suspend fun pickPlayable(json: JSONObject, constraints: PlaybackConstraints): Playable {
-        val data = json.optJSONObject("data") ?: JSONObject()
+        val data = json.optJSONObject("data") ?: json.optJSONObject("result") ?: JSONObject()
         val dash = data.optJSONObject("dash")
         if (dash != null) {
             val videos = dash.optJSONArray("video") ?: JSONArray()
@@ -1051,8 +1085,8 @@ class PlayerActivity : AppCompatActivity() {
             ?: error("cid missing for fallback")
         val bvid = currentBvid.ifBlank { intent.getStringExtra(EXTRA_BVID).orEmpty() }
         // Extra fallback: request MP4 directly (avoid deprecated fnval=0).
-        val fallbackJson = BiliApi.playUrlDash(bvid, cid, qn = 127, fnval = 1)
-        val fallbackData = fallbackJson.optJSONObject("data") ?: JSONObject()
+        val fallbackJson = requestPlayUrlWithFallback(bvid = bvid, cid = cid, epId = currentEpId, qn = 127, fnval = 1)
+        val fallbackData = fallbackJson.optJSONObject("data") ?: fallbackJson.optJSONObject("result") ?: JSONObject()
         val fallbackUrl = fallbackData.optJSONArray("durl")?.optJSONObject(0)?.optString("url").orEmpty()
         if (fallbackUrl.isNotBlank()) return Playable.Progressive(fallbackUrl)
 
@@ -1132,7 +1166,7 @@ class PlayerActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val (qn, fnval) = playUrlParamsForSession()
-                val playJson = BiliApi.playUrlDash(bvid, cid, qn = qn, fnval = fnval)
+                val playJson = requestPlayUrlWithFallback(bvid = bvid, cid = cid, epId = currentEpId, qn = qn, fnval = fnval)
                 showRiskControlBypassHintIfNeeded(playJson)
                 lastAvailableQns = parseDashVideoQnList(playJson)
                 if (resetConstraints) {
@@ -1767,7 +1801,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun parseDashVideoQnList(playJson: JSONObject): List<Int> {
-        val data = playJson.optJSONObject("data") ?: return emptyList()
+        val data = playJson.optJSONObject("data") ?: playJson.optJSONObject("result") ?: return emptyList()
         val dash = data.optJSONObject("dash") ?: return emptyList()
         val videos = dash.optJSONArray("video") ?: return emptyList()
         val list = ArrayList<Int>(videos.length())
@@ -1811,6 +1845,8 @@ class PlayerActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_BVID = "bvid"
         const val EXTRA_CID = "cid"
+        const val EXTRA_EP_ID = "ep_id"
+        const val EXTRA_AID = "aid"
         private const val SEEK_MAX = 10_000
         private const val AUTO_HIDE_MS = 4_000L
         private const val EDGE_TAP_THRESHOLD = 0.28f

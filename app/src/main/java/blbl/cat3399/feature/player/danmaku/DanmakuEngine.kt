@@ -21,14 +21,44 @@ class DanmakuEngine {
         val textWidth: Float,
     )
 
-    private var danmakus: List<Danmaku> = emptyList()
+    private var danmakus: MutableList<Danmaku> = mutableListOf()
     private var index = 0
     private val active = ArrayList<Active>()
     private val pending = ArrayDeque<Pending>()
 
     fun setDanmakus(list: List<Danmaku>) {
-        danmakus = list.sortedBy { it.timeMs }
+        danmakus = list.sortedBy { it.timeMs }.toMutableList()
         index = 0
+        active.clear()
+        pending.clear()
+    }
+
+    fun appendDanmakus(list: List<Danmaku>) {
+        if (list.isEmpty()) return
+        if (danmakus.isEmpty()) {
+            setDanmakus(list)
+            return
+        }
+        val sorted = list.sortedBy { it.timeMs }
+        val last = danmakus.lastOrNull()?.timeMs ?: Int.MIN_VALUE
+        if (sorted.first().timeMs >= last) {
+            danmakus.addAll(sorted)
+            return
+        }
+        // Fallback: merge & reset (rare for live mode).
+        danmakus.addAll(sorted)
+        danmakus.sortBy { it.timeMs }
+        index = 0
+        active.clear()
+        pending.clear()
+    }
+
+    fun trimToMax(maxItems: Int) {
+        if (maxItems <= 0) return
+        val drop = danmakus.size - maxItems
+        if (drop <= 0) return
+        danmakus = danmakus.drop(drop).toMutableList()
+        index = (index - drop).coerceAtLeast(0)
         active.clear()
         pending.clear()
     }

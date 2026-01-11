@@ -81,4 +81,13 @@
         app:layout_constraintStart_toEndOf="@id/sidebar"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <include
+        android:id="@+id/user_info_overlay"
+        layout="@layout/dialog_user_info"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>
