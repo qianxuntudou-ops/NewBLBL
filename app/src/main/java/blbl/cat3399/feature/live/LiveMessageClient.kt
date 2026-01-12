@@ -113,7 +113,12 @@ class LiveMessageClient(
                 else -> "wss" to 443
             }
 
-        val url = "$scheme://${host.host}:$port/sub"
+        val url =
+            when {
+                scheme == "wss" && port == 443 -> "$scheme://${host.host}/sub"
+                scheme == "ws" && port == 80 -> "$scheme://${host.host}/sub"
+                else -> "$scheme://${host.host}:$port/sub"
+            }
         onStatus("连接弹幕：${host.host}:$port")
 
         val req =
@@ -166,9 +171,19 @@ class LiveMessageClient(
     ) : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             onStatus("弹幕已连接")
+            val uid =
+                if (!BiliClient.cookies.hasSessData()) {
+                    0L
+                } else {
+                    BiliClient.cookies
+                        .getCookieValue("DedeUserID")
+                        ?.trim()
+                        ?.toLongOrNull()
+                        ?: 0L
+                }
             val body =
                 JSONObject()
-                    .put("uid", 0)
+                    .put("uid", uid)
                     .put("roomid", roomId)
                     .put("protover", 3) // allow brotli/zlib packets
                     .put("platform", "web")
@@ -176,7 +191,8 @@ class LiveMessageClient(
                     .put("key", token)
                     .toString()
                     .toByteArray(Charsets.UTF_8)
-            webSocket.send(ByteString.of(*buildPacket(op = OP_AUTH, ver = 1, body = body)))
+            val sent = webSocket.send(ByteString.of(*buildPacket(op = OP_AUTH, ver = 1, body = body)))
+            AppLog.d("LiveWs", "send auth ok=$sent uid=$uid roomId=$roomId")
 
             authTimeoutTask?.cancel(true)
             authTimeoutTask =
@@ -197,6 +213,11 @@ class LiveMessageClient(
             val data = bytes.toByteArray()
             runCatching { handlePacketBytes(data) }
                 .onFailure { AppLog.w("LiveWs", "handle ws packet failed size=${data.size}", it) }
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            val preview = text.replace("\n", "\\n").replace("\r", "\\r").take(160)
+            AppLog.d("LiveWs", "onMessage(text) len=${text.length} preview=$preview")
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {

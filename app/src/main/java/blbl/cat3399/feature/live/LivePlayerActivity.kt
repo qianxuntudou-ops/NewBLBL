@@ -447,27 +447,39 @@ class LivePlayerActivity : AppCompatActivity() {
             LiveMessageClient(
                 roomId = rid,
                 onDanmaku = { ev ->
-                    if (!session.danmaku.enabled) return@LiveMessageClient
-                    val exo = player ?: return@LiveMessageClient
-                    val d =
-                        Danmaku(
-                            timeMs = exo.currentPosition.toInt(),
-                            mode = 1,
-                            text = ev.text,
-                            color = ev.color,
-                            fontSize = 25,
-                            weight = 0,
-                        )
-                    binding.danmakuView.appendDanmakus(listOf(d), maxItems = 2000)
-                    pushChatItem(LiveChatAdapter.Item(title = "弹幕", body = ev.text))
+                    runOnUiThread(
+                        Runnable {
+                            if (!session.danmaku.enabled) return@Runnable
+                            val exo = player ?: return@Runnable
+                        val d =
+                            Danmaku(
+                                timeMs = exo.currentPosition.toInt(),
+                                mode = 1,
+                                text = ev.text,
+                                color = ev.color,
+                                fontSize = 25,
+                                weight = 0,
+                            )
+                        binding.danmakuView.appendDanmakus(listOf(d), maxItems = 2000)
+                        pushChatItem(LiveChatAdapter.Item(title = "弹幕", body = ev.text))
+                        },
+                    )
                 },
                 onSuperChat = { ev ->
-                    val title = "SC ¥${ev.price} · ${ev.user.ifBlank { "匿名" }}"
-                    pushChatItem(LiveChatAdapter.Item(title = title, body = ev.message))
+                    runOnUiThread(
+                        Runnable {
+                            val title = "SC ¥${ev.price} · ${ev.user.ifBlank { "匿名" }}"
+                            pushChatItem(LiveChatAdapter.Item(title = title, body = ev.message))
+                        },
+                    )
                 },
                 onStatus = { msg ->
-                    AppLog.d("LiveWs", msg)
-                    pushChatItem(LiveChatAdapter.Item(title = "系统", body = msg))
+                    runOnUiThread(
+                        Runnable {
+                            AppLog.d("LiveWs", msg)
+                            pushChatItem(LiveChatAdapter.Item(title = "系统", body = msg))
+                        },
+                    )
                 },
             )
 

@@ -70,6 +70,7 @@ class LiveFragment : Fragment(), LiveGridTabSwitchFocusHost {
     }
 
     private fun setTabs(list: List<LiveTab>) {
+        if (_binding == null) return
         mediator?.detach()
         mediator = null
 
@@ -79,12 +80,14 @@ class LiveFragment : Fragment(), LiveGridTabSwitchFocusHost {
                 tab.text = list.getOrNull(position)?.title ?: ""
             }.also { it.attach() }
 
-        binding.tabLayout.post {
-            binding.tabLayout.enableDpadTabFocus { position ->
+        val tabLayout = binding.tabLayout
+        tabLayout.post {
+            if (_binding == null) return@post
+            tabLayout.enableDpadTabFocus { position ->
                 val title = list.getOrNull(position)?.title
                 AppLog.d("Live", "tab focus pos=$position title=$title t=${SystemClock.uptimeMillis()}")
             }
-            val tabStrip = binding.tabLayout.getChildAt(0) as? ViewGroup ?: return@post
+            val tabStrip = tabLayout.getChildAt(0) as? ViewGroup ?: return@post
             for (i in 0 until tabStrip.childCount) {
                 tabStrip.getChildAt(i).setOnKeyListener { _, keyCode, event ->
                     if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
