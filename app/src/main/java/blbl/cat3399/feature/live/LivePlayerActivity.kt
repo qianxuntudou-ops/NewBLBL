@@ -168,7 +168,11 @@ class LivePlayerActivity : AppCompatActivity() {
         if (isInteractionKey(keyCode)) noteUserInteraction()
 
         when (keyCode) {
-            KeyEvent.KEYCODE_MENU -> {
+            KeyEvent.KEYCODE_MENU,
+            KeyEvent.KEYCODE_SETTINGS,
+            KeyEvent.KEYCODE_INFO,
+            KeyEvent.KEYCODE_GUIDE,
+            -> {
                 if (binding.settingsPanel.visibility == View.VISIBLE) return true
                 setControlsVisible(true)
                 focusFirstControl()
@@ -382,6 +386,9 @@ class LivePlayerActivity : AppCompatActivity() {
             KeyEvent.KEYCODE_MEDIA_PLAY,
             KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MENU,
+            KeyEvent.KEYCODE_SETTINGS,
+            KeyEvent.KEYCODE_INFO,
+            KeyEvent.KEYCODE_GUIDE,
             -> true
             else -> false
         }

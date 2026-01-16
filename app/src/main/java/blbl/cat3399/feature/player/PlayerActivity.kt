@@ -327,7 +327,11 @@ class PlayerActivity : AppCompatActivity() {
         if (isInteractionKey(keyCode)) noteUserInteraction()
 
         when (keyCode) {
-            KeyEvent.KEYCODE_MENU -> {
+            KeyEvent.KEYCODE_MENU,
+            KeyEvent.KEYCODE_SETTINGS,
+            KeyEvent.KEYCODE_INFO,
+            KeyEvent.KEYCODE_GUIDE,
+            -> {
                 if (binding.settingsPanel.visibility == View.VISIBLE) return true
                 setControlsVisible(true)
                 focusFirstControl()
@@ -805,6 +809,9 @@ class PlayerActivity : AppCompatActivity() {
             KeyEvent.KEYCODE_MEDIA_REWIND,
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
             KeyEvent.KEYCODE_MENU,
+            KeyEvent.KEYCODE_SETTINGS,
+            KeyEvent.KEYCODE_INFO,
+            KeyEvent.KEYCODE_GUIDE,
             -> true
 
             else -> false
