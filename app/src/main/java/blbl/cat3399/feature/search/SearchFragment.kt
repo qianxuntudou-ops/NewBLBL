@@ -1,5 +1,6 @@
 package blbl.cat3399.feature.search
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
@@ -8,7 +9,10 @@ import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
+import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -19,6 +23,7 @@ import blbl.cat3399.R
 import blbl.cat3399.core.api.BiliApi
 import blbl.cat3399.core.log.AppLog
 import blbl.cat3399.core.net.BiliClient
+import blbl.cat3399.core.tv.TvMode
 import blbl.cat3399.core.ui.enableDpadTabFocus
 import blbl.cat3399.databinding.FragmentSearchBinding
 import blbl.cat3399.feature.player.PlayerActivity
@@ -42,6 +47,8 @@ class SearchFragment : Fragment(), BackPressHandler {
     private var history: List<String> = emptyList()
 
     private var suggestJob: Job? = null
+    private var isTvMode: Boolean = false
+    private var ignoreQueryTextChanges: Boolean = false
 
     private var lastFocusedKeyPos: Int = 0
     private var lastFocusedSuggestPos: Int = 0
@@ -85,6 +92,9 @@ class SearchFragment : Fragment(), BackPressHandler {
     }
 
     private fun setupInput() {
+        isTvMode = TvMode.isEnabled(requireContext())
+        setupQueryInput()
+
         keyAdapter = SearchKeyAdapter { key ->
             if (binding.panelResults.visibility == View.VISIBLE) showInput()
             setQuery(query + key)
@@ -298,6 +308,71 @@ class SearchFragment : Fragment(), BackPressHandler {
         updateClearHistoryButton(query)
     }
 
+    private fun setupQueryInput() {
+        val input = binding.tvQuery
+
+        if (isTvMode) {
+            input.apply {
+                isFocusable = false
+                isFocusableInTouchMode = false
+                isCursorVisible = false
+                isLongClickable = false
+                setTextIsSelectable(false)
+                showSoftInputOnFocus = false
+                setOnClickListener(null)
+                setOnFocusChangeListener(null)
+                setOnEditorActionListener(null)
+            }
+            return
+        }
+
+        input.showSoftInputOnFocus = true
+        input.isFocusable = true
+        input.isFocusableInTouchMode = true
+
+        input.setOnClickListener {
+            if (binding.panelResults.visibility == View.VISIBLE) showInput()
+            input.requestFocus()
+            input.setSelection(input.text?.length ?: 0)
+            showIme(input)
+        }
+
+        input.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                input.post { showIme(input) }
+            }
+        }
+
+        input.setOnEditorActionListener { _, actionId, event ->
+            val isEnter =
+                event != null &&
+                    event.action == KeyEvent.ACTION_DOWN &&
+                    (event.keyCode == KeyEvent.KEYCODE_ENTER || event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)
+            if (actionId == EditorInfo.IME_ACTION_SEARCH || isEnter) {
+                performSearch()
+                true
+            } else {
+                false
+            }
+        }
+
+        input.doAfterTextChanged {
+            if (ignoreQueryTextChanges) return@doAfterTextChanged
+            setQueryFromTextInput(it?.toString().orEmpty())
+        }
+    }
+
+    private fun setQueryFromTextInput(value: String) {
+        val trimmed = value.trim()
+        if (query == trimmed) {
+            binding.tvQuery.alpha = if (query.isBlank()) 0.65f else 1f
+            return
+        }
+        query = trimmed
+        binding.tvQuery.alpha = if (query.isBlank()) 0.65f else 1f
+        scheduleMiddleList(trimmed)
+    }
+
     private fun setupResults() {
         resultAdapter =
             VideoCardAdapter { card ->
@@ -480,9 +555,17 @@ class SearchFragment : Fragment(), BackPressHandler {
 
     private fun updateQueryUi() {
         val hintText = defaultHint ?: getString(R.string.tab_search)
-        val showingHint = query.isBlank()
-        binding.tvQuery.text = if (showingHint) hintText else query
-        binding.tvQuery.alpha = if (showingHint) 0.65f else 1f
+        binding.tvQuery.hint = hintText
+        binding.tvQuery.alpha = if (query.isBlank()) 0.65f else 1f
+
+        val current = binding.tvQuery.text?.toString().orEmpty()
+        if (current == query) return
+        ignoreQueryTextChanges = true
+        binding.tvQuery.setText(query)
+        if (binding.tvQuery.hasFocus()) {
+            binding.tvQuery.setSelection(binding.tvQuery.text?.length ?: 0)
+        }
+        ignoreQueryTextChanges = false
     }
 
     private fun scheduleMiddleList(term: String) {
@@ -534,6 +617,10 @@ class SearchFragment : Fragment(), BackPressHandler {
         setQuery(keyword)
         BiliClient.prefs.addSearchHistory(keyword)
         reloadHistory()
+        if (!isTvMode) {
+            hideIme(binding.tvQuery)
+            binding.tvQuery.clearFocus()
+        }
         showResults()
         resetAndLoad()
         focusSelectedTabAfterShow()
@@ -547,6 +634,16 @@ class SearchFragment : Fragment(), BackPressHandler {
     private fun showResults() {
         binding.panelInput.visibility = View.GONE
         binding.panelResults.visibility = View.VISIBLE
+    }
+
+    private fun showIme(view: View) {
+        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
+        imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun hideIme(view: View) {
+        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
+        imm.hideSoftInputFromWindow(view.windowToken, 0)
     }
 
     private fun focusFirstKey() {
