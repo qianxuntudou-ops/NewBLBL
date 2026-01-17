@@ -22,11 +22,18 @@ import androidx.recyclerview.widget.StaggeredGridLayoutManager
 import blbl.cat3399.R
 import blbl.cat3399.core.api.BiliApi
 import blbl.cat3399.core.log.AppLog
+import blbl.cat3399.core.model.BangumiSeason
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.tv.TvMode
 import blbl.cat3399.core.ui.SingleChoiceDialog
 import blbl.cat3399.core.ui.enableDpadTabFocus
 import blbl.cat3399.databinding.FragmentSearchBinding
+import blbl.cat3399.feature.following.FollowingGridAdapter
+import blbl.cat3399.feature.following.UpDetailActivity
+import blbl.cat3399.feature.live.LivePlayerActivity
+import blbl.cat3399.feature.live.LiveRoomAdapter
+import blbl.cat3399.feature.my.BangumiFollowAdapter
+import blbl.cat3399.feature.my.MyBangumiDetailFragment
 import blbl.cat3399.feature.player.PlayerActivity
 import blbl.cat3399.feature.player.PlayerPlaylistItem
 import blbl.cat3399.feature.player.PlayerPlaylistStore
@@ -43,7 +50,10 @@ class SearchFragment : Fragment(), BackPressHandler {
     private lateinit var keyAdapter: SearchKeyAdapter
     private lateinit var suggestAdapter: SearchSuggestAdapter
     private lateinit var hotAdapter: SearchHotAdapter
-    private lateinit var resultAdapter: VideoCardAdapter
+    private lateinit var videoAdapter: VideoCardAdapter
+    private lateinit var mediaAdapter: BangumiFollowAdapter
+    private lateinit var liveAdapter: LiveRoomAdapter
+    private lateinit var userAdapter: FollowingGridAdapter
 
     private var defaultHint: String? = null
     private var query: String = ""
@@ -57,16 +67,31 @@ class SearchFragment : Fragment(), BackPressHandler {
     private var lastFocusedSuggestPos: Int = 0
 
     private var currentTabIndex: Int = 0
-    private var currentOrder: Order = Order.TotalRank
+    private var currentVideoOrder: VideoOrder = VideoOrder.TotalRank
+    private var currentLiveOrder: LiveOrder = LiveOrder.Online
+    private var currentUserOrder: UserOrder = UserOrder.Default
+    private var currentMediaKind: MediaKind = MediaKind.Ft
     private var pendingFocusFirstResultCardFromTabSwitch: Boolean = false
     private var pendingFocusNextResultCardAfterLoadMoreFromDpad: Boolean = false
     private var pendingFocusNextResultCardAfterLoadMoreFromPos: Int = RecyclerView.NO_POSITION
+    private var pendingRestoreMediaPos: Int? = null
 
     private val loadedBvids = HashSet<String>()
-    private var isLoadingMore: Boolean = false
-    private var endReached: Boolean = false
-    private var page: Int = 1
-    private var requestToken: Int = 0
+    private val loadedSeasonIds = HashSet<Long>()
+    private val loadedRoomIds = HashSet<Long>()
+    private val loadedMids = HashSet<Long>()
+
+    private data class TabState(
+        var isLoadingMore: Boolean = false,
+        var endReached: Boolean = false,
+        var page: Int = 1,
+        var requestToken: Int = 0,
+    )
+
+    private val videoState = TabState()
+    private val mediaState = TabState()
+    private val liveState = TabState()
+    private val userState = TabState()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentSearchBinding.inflate(inflater, container, false)
@@ -381,10 +406,10 @@ class SearchFragment : Fragment(), BackPressHandler {
     }
 
     private fun setupResults() {
-        resultAdapter =
+        videoAdapter =
             VideoCardAdapter { card, pos ->
                 val playlistItems =
-                    resultAdapter.snapshot().map {
+                    videoAdapter.snapshot().map {
                         PlayerPlaylistItem(
                             bvid = it.bvid,
                             cid = it.cid,
@@ -400,10 +425,49 @@ class SearchFragment : Fragment(), BackPressHandler {
                         .putExtra(PlayerActivity.EXTRA_PLAYLIST_INDEX, pos),
                 )
             }
-        resultAdapter.setTvMode(isTvMode)
-        binding.recyclerResults.adapter = resultAdapter
+        videoAdapter.setTvMode(isTvMode)
+
+        if (!::mediaAdapter.isInitialized) {
+            mediaAdapter =
+                BangumiFollowAdapter { position, season ->
+                    pendingRestoreMediaPos = position
+                    openBangumiDetail(season)
+                }
+        }
+        if (!::liveAdapter.isInitialized) {
+            liveAdapter =
+                LiveRoomAdapter { room ->
+                    if (!room.isLive) {
+                        Toast.makeText(requireContext(), "未开播", Toast.LENGTH_SHORT).show()
+                        return@LiveRoomAdapter
+                    }
+                    startActivity(
+                        Intent(requireContext(), LivePlayerActivity::class.java)
+                            .putExtra(LivePlayerActivity.EXTRA_ROOM_ID, room.roomId)
+                            .putExtra(LivePlayerActivity.EXTRA_TITLE, room.title)
+                            .putExtra(LivePlayerActivity.EXTRA_UNAME, room.uname),
+                    )
+                }
+        }
+        if (!::userAdapter.isInitialized) {
+            userAdapter =
+                FollowingGridAdapter { following ->
+                    startActivity(
+                        Intent(requireContext(), UpDetailActivity::class.java)
+                            .putExtra(UpDetailActivity.EXTRA_MID, following.mid)
+                            .putExtra(UpDetailActivity.EXTRA_NAME, following.name)
+                            .putExtra(UpDetailActivity.EXTRA_AVATAR, following.avatarUrl)
+                            .putExtra(UpDetailActivity.EXTRA_SIGN, following.sign),
+                    )
+                }
+        }
+
+        liveAdapter.setTvMode(isTvMode)
+        userAdapter.setTvMode(isTvMode)
+
+        binding.recyclerResults.adapter = adapterForTab(currentTabIndex)
         binding.recyclerResults.setHasFixedSize(true)
-        binding.recyclerResults.layoutManager = GridLayoutManager(requireContext(), spanCountForWidth())
+        binding.recyclerResults.layoutManager = GridLayoutManager(requireContext(), spanCountForCurrentTab())
         (binding.recyclerResults.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
         binding.recyclerResults.addOnChildAttachStateChangeListener(
             object : RecyclerView.OnChildAttachStateChangeListener {
@@ -465,7 +529,7 @@ class SearchFragment : Fragment(), BackPressHandler {
 
 	                                    // Bottom edge: keep focus inside the list (avoid escaping to sidebar) and
 	                                    // trigger loading more if possible.
-	                                    if (!endReached) {
+	                                    if (!stateForTab(currentTabIndex).endReached) {
 	                                        pendingFocusNextResultCardAfterLoadMoreFromDpad = true
 	                                        pendingFocusNextResultCardAfterLoadMoreFromPos = pos
 	                                        loadNextPage()
@@ -490,10 +554,11 @@ class SearchFragment : Fragment(), BackPressHandler {
             object : RecyclerView.OnScrollListener() {
                 override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                     if (dy <= 0) return
-                    if (isLoadingMore || endReached) return
+                    val state = stateForTab(currentTabIndex)
+                    if (state.isLoadingMore || state.endReached) return
                     val lm = recyclerView.layoutManager as? GridLayoutManager ?: return
                     val lastVisible = lm.findLastVisibleItemPosition()
-                    val total = resultAdapter.itemCount
+                    val total = recyclerView.adapter?.itemCount ?: 0
                     if (total <= 0) return
                     if (total - lastVisible - 1 <= 8) loadNextPage()
                 }
@@ -549,7 +614,7 @@ class SearchFragment : Fragment(), BackPressHandler {
             // Prevent focus escaping to sidebar when pressing UP on top controls.
             true
         }
-	        binding.tvSort.text = getString(currentOrder.labelRes)
+	        updateSortUi()
 
 	        binding.swipeRefresh.setOnRefreshListener { resetAndLoad() }
 	    }
@@ -711,7 +776,6 @@ class SearchFragment : Fragment(), BackPressHandler {
 
 	    private fun focusFirstResultCardFromTab(): Boolean {
 	        if (binding.panelResults.visibility != View.VISIBLE) return false
-	        if (currentTabIndex != 0) return true
             pendingFocusFirstResultCardFromTabSwitch = true
             if (!isResumed) return true
             return maybeConsumePendingFocusFirstResultCardFromTabSwitch()
@@ -719,17 +783,7 @@ class SearchFragment : Fragment(), BackPressHandler {
 
         private fun requestFocusResultsContentFromTabSwitch(): Boolean {
             if (binding.panelResults.visibility != View.VISIBLE) return false
-            return if (currentTabIndex == 0) {
-                requestFocusFirstResultCardFromTabSwitch()
-            } else {
-                val panel = binding.panelResults
-                val placeholder = binding.tvResultsPlaceholder
-                panel.post {
-                    if (_binding == null) return@post
-                    placeholder.requestFocus()
-                }
-                true
-            }
+            return requestFocusFirstResultCardFromTabSwitch()
         }
 
         private fun requestFocusFirstResultCardFromTabSwitch(): Boolean {
@@ -741,7 +795,7 @@ class SearchFragment : Fragment(), BackPressHandler {
         private fun maybeConsumePendingFocusFirstResultCardFromTabSwitch(): Boolean {
             if (!pendingFocusFirstResultCardFromTabSwitch) return false
             if (_binding == null || !isAdded || !isResumed) return false
-            if (binding.panelResults.visibility != View.VISIBLE || currentTabIndex != 0) {
+            if (binding.panelResults.visibility != View.VISIBLE) {
                 pendingFocusFirstResultCardFromTabSwitch = false
                 return false
             }
@@ -752,7 +806,8 @@ class SearchFragment : Fragment(), BackPressHandler {
                 return false
             }
 
-            if (resultAdapter.itemCount <= 0) {
+            val adapter = binding.recyclerResults.adapter
+            if (adapter == null || adapter.itemCount <= 0) {
                 binding.recyclerResults.requestFocus()
                 return true
             }
@@ -874,72 +929,123 @@ class SearchFragment : Fragment(), BackPressHandler {
 
     private fun switchTab(pos: Int) {
         if (binding.panelResults.visibility != View.VISIBLE) return
-        when (pos) {
-            0 -> {
-                binding.tvResultsPlaceholder.visibility = View.GONE
-                binding.swipeRefresh.visibility = View.VISIBLE
-                resetAndLoad()
-            }
-            else -> {
-                binding.swipeRefresh.isRefreshing = false
-                binding.swipeRefresh.visibility = View.GONE
-                binding.tvResultsPlaceholder.visibility = View.VISIBLE
-            }
-        }
+        binding.recyclerResults.adapter = adapterForTab(pos)
+        (binding.recyclerResults.layoutManager as? GridLayoutManager)?.spanCount = spanCountForTab(pos)
+        binding.recyclerResults.scrollToPosition(0)
+        updateSortUi()
+
+        binding.tvResultsPlaceholder.visibility = View.GONE
+        binding.swipeRefresh.visibility = View.VISIBLE
+        resetAndLoad()
     }
 
     private fun resetAndLoad() {
         val b = _binding ?: return
         if (b.panelResults.visibility != View.VISIBLE) return
-        if (currentTabIndex != 0) return
-        loadedBvids.clear()
-        endReached = false
-        isLoadingMore = false
-        page = 1
-        requestToken++
+        clearLoadedForTab(currentTabIndex)
+        clearPendingFocusNextResultCardAfterLoadMoreFromDpad()
+        val state = stateForTab(currentTabIndex)
+        state.endReached = false
+        state.isLoadingMore = false
+        state.page = 1
+        state.requestToken++
         b.recyclerResults.scrollToPosition(0)
         b.swipeRefresh.isRefreshing = true
         loadNextPage(isRefresh = true)
     }
 
     private fun loadNextPage(isRefresh: Boolean = false) {
-        if (isLoadingMore || endReached) return
-        if (currentTabIndex != 0) return
         val keyword = query.ifBlank { defaultHint?.trim().orEmpty() }
         if (keyword.isBlank()) return
-        val token = requestToken
-        isLoadingMore = true
+        val tab = tabForIndex(currentTabIndex)
+        val state = stateForTab(currentTabIndex)
+        if (state.isLoadingMore || state.endReached) return
+        val token = state.requestToken
+        state.isLoadingMore = true
         val startAt = SystemClock.uptimeMillis()
-        AppLog.d("Search", "load start keyword=${keyword.take(12)} page=$page order=${currentOrder.apiValue} t=$startAt")
+        AppLog.d("Search", "load start tab=${tab.name} keyword=${keyword.take(12)} page=${state.page} t=$startAt")
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val res = BiliApi.searchVideo(keyword = keyword, page = page, order = currentOrder.apiValue)
-                if (token != requestToken) return@launch
+                when (tab) {
+                    Tab.Video -> {
+                        val res = BiliApi.searchVideo(keyword = keyword, page = state.page, order = currentVideoOrder.apiValue)
+                        if (token != state.requestToken || currentTabIndex != tab.index) return@launch
+                        val list = res.items
+                        if (list.isEmpty()) {
+                            state.endReached = true
+                            return@launch
+                        }
+                        val filtered = list.filter { loadedBvids.add(it.bvid) }
+                        if (state.page == 1) videoAdapter.submit(filtered) else videoAdapter.append(filtered)
+                        state.page++
+                        if (res.pages in 1..state.page && state.page > res.pages) state.endReached = true
+                        if (filtered.isEmpty()) state.endReached = true
+                        AppLog.i("Search", "load ok tab=video add=${filtered.size} total=${videoAdapter.itemCount} cost=${SystemClock.uptimeMillis() - startAt}ms")
+                    }
 
-                val list = res.items
-                if (list.isEmpty()) {
-                    endReached = true
-                    return@launch
+                    Tab.Media -> {
+                        val res =
+                            when (currentMediaKind) {
+                                MediaKind.Ft -> BiliApi.searchMediaFt(keyword = keyword, page = state.page, order = "totalrank")
+                                MediaKind.Bangumi -> BiliApi.searchMediaBangumi(keyword = keyword, page = state.page, order = "totalrank")
+                            }
+                        if (token != state.requestToken || currentTabIndex != tab.index) return@launch
+                        val list = res.items
+                        if (list.isEmpty()) {
+                            state.endReached = true
+                            return@launch
+                        }
+                        val filtered = list.filter { loadedSeasonIds.add(it.seasonId) }
+                        if (state.page == 1) mediaAdapter.submit(filtered) else mediaAdapter.append(filtered)
+                        state.page++
+                        if (res.pages in 1..state.page && state.page > res.pages) state.endReached = true
+                        if (filtered.isEmpty()) state.endReached = true
+                        AppLog.i("Search", "load ok tab=media add=${filtered.size} cost=${SystemClock.uptimeMillis() - startAt}ms")
+                    }
+
+                    Tab.Live -> {
+                        val res = BiliApi.searchLiveRoom(keyword = keyword, page = state.page, order = currentLiveOrder.apiValue)
+                        if (token != state.requestToken || currentTabIndex != tab.index) return@launch
+                        val list = res.items
+                        if (list.isEmpty()) {
+                            state.endReached = true
+                            return@launch
+                        }
+                        val filtered = list.filter { loadedRoomIds.add(it.roomId) }
+                        if (state.page == 1) liveAdapter.submit(filtered) else liveAdapter.append(filtered)
+                        state.page++
+                        if (res.pages in 1..state.page && state.page > res.pages) state.endReached = true
+                        if (filtered.isEmpty()) state.endReached = true
+                        AppLog.i("Search", "load ok tab=live add=${filtered.size} cost=${SystemClock.uptimeMillis() - startAt}ms")
+                    }
+
+                    Tab.User -> {
+                        val res = BiliApi.searchUser(keyword = keyword, page = state.page, order = currentUserOrder.apiValue)
+                        if (token != state.requestToken || currentTabIndex != tab.index) return@launch
+                        val list = res.items
+                        if (list.isEmpty()) {
+                            state.endReached = true
+                            return@launch
+                        }
+                        val filtered = list.filter { loadedMids.add(it.mid) }
+                        if (state.page == 1) userAdapter.submit(filtered) else userAdapter.append(filtered)
+                        state.page++
+                        if (res.pages in 1..state.page && state.page > res.pages) state.endReached = true
+                        if (filtered.isEmpty()) state.endReached = true
+                        AppLog.i("Search", "load ok tab=user add=${filtered.size} cost=${SystemClock.uptimeMillis() - startAt}ms")
+                    }
                 }
 
-	                val filtered = list.filter { loadedBvids.add(it.bvid) }
-	                if (page == 1) resultAdapter.submit(filtered) else resultAdapter.append(filtered)
-	                _binding?.recyclerResults?.post {
-	                    maybeConsumePendingFocusFirstResultCardFromTabSwitch()
-	                    maybeConsumePendingFocusNextResultCardAfterLoadMoreFromDpad()
-	                }
-	                page++
-
-                if (res.pages in 1..page && page > res.pages) endReached = true
-                if (filtered.isEmpty()) endReached = true
-
-                AppLog.i("Search", "load ok add=${filtered.size} total=${resultAdapter.itemCount} cost=${SystemClock.uptimeMillis() - startAt}ms")
+                _binding?.recyclerResults?.post {
+                    maybeConsumePendingFocusFirstResultCardFromTabSwitch()
+                    maybeConsumePendingFocusNextResultCardAfterLoadMoreFromDpad()
+                }
             } catch (t: Throwable) {
-                AppLog.e("Search", "load failed page=$page", t)
+                AppLog.e("Search", "load failed tab=${tab.name} page=${state.page}", t)
                 context?.let { Toast.makeText(it, "搜索失败，可查看 Logcat(标签 BLBL)", Toast.LENGTH_SHORT).show() }
             } finally {
-                if (isRefresh && token == requestToken) _binding?.swipeRefresh?.isRefreshing = false
-                isLoadingMore = false
+                if (isRefresh && token == state.requestToken) _binding?.swipeRefresh?.isRefreshing = false
+                state.isLoadingMore = false
 	            }
 	        }
 	    }
@@ -952,12 +1058,17 @@ class SearchFragment : Fragment(), BackPressHandler {
     private fun maybeConsumePendingFocusNextResultCardAfterLoadMoreFromDpad(): Boolean {
         if (!pendingFocusNextResultCardAfterLoadMoreFromDpad) return false
         val b = _binding
-        if (b == null || !isResumed || !this::resultAdapter.isInitialized) {
+        if (b == null || !isResumed) {
             clearPendingFocusNextResultCardAfterLoadMoreFromDpad()
             return false
         }
 
         val recycler = b.recyclerResults
+        val adapter = recycler.adapter
+        if (adapter == null) {
+            clearPendingFocusNextResultCardAfterLoadMoreFromDpad()
+            return false
+        }
         val lm = recycler.layoutManager as? GridLayoutManager
         if (lm == null) {
             clearPendingFocusNextResultCardAfterLoadMoreFromDpad()
@@ -977,7 +1088,7 @@ class SearchFragment : Fragment(), BackPressHandler {
         }
 
         val spanCount = lm.spanCount.coerceAtLeast(1)
-        val itemCount = resultAdapter.itemCount
+        val itemCount = adapter.itemCount
         val candidatePos =
             when {
                 anchorPos + spanCount in 0 until itemCount -> anchorPos + spanCount
@@ -1009,26 +1120,84 @@ class SearchFragment : Fragment(), BackPressHandler {
     }
 
     private fun showSortDialog() {
-        if (currentTabIndex != 0) {
-            Toast.makeText(requireContext(), getString(R.string.search_unsupported), Toast.LENGTH_SHORT).show()
-            return
-        }
-        val items = Order.entries
-        val labels = items.map { getString(it.labelRes) }
-        val checked = items.indexOf(currentOrder).coerceAtLeast(0)
-        SingleChoiceDialog.show(
-            context = requireContext(),
-            title = getString(R.string.search_sort_title),
-            items = labels,
-            checkedIndex = checked,
-            negativeText = getString(android.R.string.cancel),
-        ) { which, _ ->
-            val picked = items.getOrNull(which) ?: return@show
-            if (picked != currentOrder) {
-                currentOrder = picked
-                _binding?.let { b ->
-                    b.tvSort.text = getString(currentOrder.labelRes)
-                    resetAndLoad()
+        when (tabForIndex(currentTabIndex)) {
+            Tab.Video -> {
+                val items = VideoOrder.entries
+                val labels = items.map { getString(it.labelRes) }
+                val checked = items.indexOf(currentVideoOrder).coerceAtLeast(0)
+                SingleChoiceDialog.show(
+                    context = requireContext(),
+                    title = getString(R.string.search_sort_title),
+                    items = labels,
+                    checkedIndex = checked,
+                    negativeText = getString(android.R.string.cancel),
+                ) { which, _ ->
+                    val picked = items.getOrNull(which) ?: return@show
+                    if (picked != currentVideoOrder) {
+                        currentVideoOrder = picked
+                        updateSortUi()
+                        resetAndLoad()
+                    }
+                }
+            }
+
+            Tab.Live -> {
+                val items = LiveOrder.entries
+                val labels = items.map { getString(it.labelRes) }
+                val checked = items.indexOf(currentLiveOrder).coerceAtLeast(0)
+                SingleChoiceDialog.show(
+                    context = requireContext(),
+                    title = getString(R.string.search_sort_title),
+                    items = labels,
+                    checkedIndex = checked,
+                    negativeText = getString(android.R.string.cancel),
+                ) { which, _ ->
+                    val picked = items.getOrNull(which) ?: return@show
+                    if (picked != currentLiveOrder) {
+                        currentLiveOrder = picked
+                        updateSortUi()
+                        resetAndLoad()
+                    }
+                }
+            }
+
+            Tab.User -> {
+                val items = UserOrder.entries
+                val labels = items.map { getString(it.labelRes) }
+                val checked = items.indexOf(currentUserOrder).coerceAtLeast(0)
+                SingleChoiceDialog.show(
+                    context = requireContext(),
+                    title = getString(R.string.search_sort_title),
+                    items = labels,
+                    checkedIndex = checked,
+                    negativeText = getString(android.R.string.cancel),
+                ) { which, _ ->
+                    val picked = items.getOrNull(which) ?: return@show
+                    if (picked != currentUserOrder) {
+                        currentUserOrder = picked
+                        updateSortUi()
+                        resetAndLoad()
+                    }
+                }
+            }
+
+            Tab.Media -> {
+                val items = MediaKind.entries
+                val labels = items.map { getString(it.labelRes) }
+                val checked = items.indexOf(currentMediaKind).coerceAtLeast(0)
+                SingleChoiceDialog.show(
+                    context = requireContext(),
+                    title = getString(R.string.search_sort_title),
+                    items = labels,
+                    checkedIndex = checked,
+                    negativeText = getString(android.R.string.cancel),
+                ) { which, _ ->
+                    val picked = items.getOrNull(which) ?: return@show
+                    if (picked != currentMediaKind) {
+                        currentMediaKind = picked
+                        updateSortUi()
+                        resetAndLoad()
+                    }
                 }
             }
         }
@@ -1049,11 +1218,36 @@ class SearchFragment : Fragment(), BackPressHandler {
     override fun onResume() {
         super.onResume()
         isTvMode = TvMode.isEnabled(requireContext())
-        resultAdapter.setTvMode(isTvMode)
+        videoAdapter.setTvMode(isTvMode)
         suggestAdapter.setTvMode(isTvMode)
         hotAdapter.setTvMode(isTvMode)
-        (binding.recyclerResults.layoutManager as? GridLayoutManager)?.spanCount = spanCountForWidth()
+        liveAdapter.setTvMode(isTvMode)
+        userAdapter.setTvMode(isTvMode)
+        (binding.recyclerResults.layoutManager as? GridLayoutManager)?.spanCount = spanCountForCurrentTab()
         maybeConsumePendingFocusFirstResultCardFromTabSwitch()
+        restoreMediaFocusIfNeeded()
+    }
+
+    private fun restoreMediaFocusIfNeeded() {
+        val pos = pendingRestoreMediaPos ?: return
+        pendingRestoreMediaPos = null
+        if (!isResumed) return
+        if (_binding == null) return
+        if (currentTabIndex != Tab.Media.index) return
+        if (binding.panelResults.visibility != View.VISIBLE) return
+        val adapter = binding.recyclerResults.adapter ?: return
+        if (adapter.itemCount <= 0) return
+        val safePos = pos.coerceIn(0, adapter.itemCount - 1)
+
+        val recycler = binding.recyclerResults
+        recycler.post outer@{
+            if (_binding == null) return@outer
+            recycler.findViewHolderForAdapterPosition(safePos)?.itemView?.requestFocus()
+                ?: run {
+                    recycler.scrollToPosition(safePos)
+                    recycler.post { recycler.findViewHolderForAdapterPosition(safePos)?.itemView?.requestFocus() }
+                }
+        }
     }
 
     override fun onDestroyView() {
@@ -1064,7 +1258,7 @@ class SearchFragment : Fragment(), BackPressHandler {
         super.onDestroyView()
     }
 
-    enum class Order(
+    enum class VideoOrder(
         val apiValue: String,
         val labelRes: Int,
     ) {
@@ -1074,6 +1268,38 @@ class SearchFragment : Fragment(), BackPressHandler {
         Dm("dm", R.string.search_sort_dm),
         Stow("stow", R.string.search_sort_stow),
         Scores("scores", R.string.search_sort_scores),
+    }
+
+    enum class LiveOrder(
+        val apiValue: String,
+        val labelRes: Int,
+    ) {
+        Online("online", R.string.search_sort_live_online),
+        LiveTime("live_time", R.string.search_sort_live_time),
+    }
+
+    enum class UserOrder(
+        val apiValue: String,
+        val labelRes: Int,
+    ) {
+        Default("0", R.string.search_sort_user_default),
+        Fans("fans", R.string.search_sort_user_fans),
+        Level("level", R.string.search_sort_user_level),
+    }
+
+    enum class MediaKind(
+        val searchType: String,
+        val labelRes: Int,
+    ) {
+        Ft("media_ft", R.string.search_media_ft),
+        Bangumi("media_bangumi", R.string.search_media_bangumi),
+    }
+
+    private enum class Tab(val index: Int) {
+        Video(0),
+        Media(1),
+        Live(2),
+        User(3),
     }
 
     companion object {
@@ -1088,5 +1314,119 @@ class SearchFragment : Fragment(), BackPressHandler {
             )
 
         fun newInstance() = SearchFragment()
+    }
+
+    private fun tabForIndex(index: Int): Tab =
+        when (index) {
+            Tab.Video.index -> Tab.Video
+            Tab.Media.index -> Tab.Media
+            Tab.Live.index -> Tab.Live
+            Tab.User.index -> Tab.User
+            else -> Tab.Video
+        }
+
+    private fun stateForTab(index: Int): TabState =
+        when (tabForIndex(index)) {
+            Tab.Video -> videoState
+            Tab.Media -> mediaState
+            Tab.Live -> liveState
+            Tab.User -> userState
+        }
+
+    private fun adapterForTab(index: Int): RecyclerView.Adapter<*> =
+        when (tabForIndex(index)) {
+            Tab.Video -> videoAdapter
+            Tab.Media -> mediaAdapter
+            Tab.Live -> liveAdapter
+            Tab.User -> userAdapter
+        }
+
+    private fun spanCountForTab(index: Int): Int =
+        when (tabForIndex(index)) {
+            Tab.Media -> spanCountForBangumi()
+            else -> spanCountForWidth()
+        }
+
+    private fun spanCountForCurrentTab(): Int = spanCountForTab(currentTabIndex)
+
+    private fun spanCountForBangumi(): Int {
+        val prefs = BiliClient.prefs
+        val override = prefs.gridSpanCount
+        if (override > 0) return override.coerceIn(1, 6)
+        return when (spanCountForWidth()) {
+            4 -> 6
+            3 -> 4
+            else -> 2
+        }
+    }
+
+    private fun clearLoadedForTab(index: Int) {
+        when (tabForIndex(index)) {
+            Tab.Video -> {
+                loadedBvids.clear()
+                videoAdapter.submit(emptyList())
+            }
+
+            Tab.Media -> {
+                loadedSeasonIds.clear()
+                mediaAdapter.submit(emptyList())
+            }
+
+            Tab.Live -> {
+                loadedRoomIds.clear()
+                liveAdapter.submit(emptyList())
+            }
+
+            Tab.User -> {
+                loadedMids.clear()
+                userAdapter.submit(emptyList())
+            }
+        }
+    }
+
+    private fun updateSortUi() {
+        val b = _binding ?: return
+        when (tabForIndex(currentTabIndex)) {
+            Tab.Video -> {
+                b.btnSort.visibility = View.VISIBLE
+                b.tvSort.text = getString(currentVideoOrder.labelRes)
+            }
+
+            Tab.Live -> {
+                b.btnSort.visibility = View.VISIBLE
+                b.tvSort.text = getString(currentLiveOrder.labelRes)
+            }
+
+            Tab.User -> {
+                b.btnSort.visibility = View.VISIBLE
+                b.tvSort.text = getString(currentUserOrder.labelRes)
+            }
+
+            Tab.Media -> {
+                b.btnSort.visibility = View.VISIBLE
+                b.tvSort.text = getString(currentMediaKind.labelRes)
+            }
+        }
+    }
+
+    private fun openBangumiDetail(season: BangumiSeason) {
+        if (!isAdded || parentFragmentManager.isStateSaved) return
+        val isDrama = currentMediaKind == MediaKind.Ft
+        // Use add+hide instead of replace so SearchFragment's view state (results panel, scroll, focus)
+        // is preserved when returning from the detail page, matching the behavior of activity navigations.
+        parentFragmentManager.beginTransaction()
+            .setReorderingAllowed(true)
+            .hide(this)
+            .add(
+                R.id.main_container,
+                MyBangumiDetailFragment.newInstance(
+                    seasonId = season.seasonId,
+                    isDrama = isDrama,
+                    continueEpId = null,
+                    continueEpIndex = null,
+                ),
+            )
+            .addToBackStack(null)
+            .commit()
     }
 }

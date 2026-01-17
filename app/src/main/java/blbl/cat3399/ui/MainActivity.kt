@@ -14,6 +14,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.fragment.app.FragmentManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.StaggeredGridLayoutManager
@@ -125,6 +126,9 @@ class MainActivity : AppCompatActivity() {
                 override fun handleOnBackPressed() {
                     if (isUserInfoOverlayVisible()) {
                         hideUserInfoOverlay()
+                        return
+                    }
+                    if (supportFragmentManager.popBackStackImmediate()) {
                         return
                     }
                     val current = supportFragmentManager.findFragmentById(R.id.main_container)
@@ -389,6 +393,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showRoot(fragment: androidx.fragment.app.Fragment): Boolean {
         AppLog.d("MainActivity", "showRoot ${fragment.javaClass.simpleName} t=${SystemClock.uptimeMillis()}")
+        runCatching { supportFragmentManager.popBackStackImmediate(null, FragmentManager.POP_BACK_STACK_INCLUSIVE) }
         supportFragmentManager.beginTransaction()
             .replace(R.id.main_container, fragment)
             .commitAllowingStateLoss()
