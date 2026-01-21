@@ -41,21 +41,20 @@ class SegmentedProgressBar : ProgressBar {
         if (segments.isEmpty()) return
 
         val bounds = progressDrawable?.bounds ?: return
-        val width = bounds.width().toFloat()
-        if (width <= 1f) return
-
         val top = bounds.top.toFloat()
         val bottom = bounds.bottom.toFloat()
 
-        val leftBase = bounds.left.toFloat()
-        val rightBase = bounds.right.toFloat()
+        val leftBase = paddingLeft.toFloat()
+        val rightBase = (width - paddingRight).toFloat()
+        val range = rightBase - leftBase
+        if (range <= 1f) return
 
         for (seg in segments) {
             val start = seg.startFraction.coerceIn(0f, 1f)
             val end = seg.endFraction.coerceIn(0f, 1f)
             if (end <= start) continue
-            val l = leftBase + (rightBase - leftBase) * start
-            val r = leftBase + (rightBase - leftBase) * end
+            val l = leftBase + range * start
+            val r = leftBase + range * end
             tmpRect.set(l, top, r, bottom)
             canvas.drawRect(tmpRect, segmentPaint)
         }

@@ -9,6 +9,7 @@ import android.view.View
 import androidx.appcompat.widget.AppCompatSeekBar
 import androidx.core.content.ContextCompat
 import blbl.cat3399.R
+import kotlin.math.max
 
 class SegmentedSeekBar : AppCompatSeekBar {
     private val segmentPaint =
@@ -68,10 +69,10 @@ class SegmentedSeekBar : AppCompatSeekBar {
         // Only adjust vertical bounds to control track thickness; changing left/right here can cause visual drift.
         val left =
             if (hasValidBounds) b.left
-            else (paddingLeft + thumbOffset).coerceAtLeast(0)
+            else max(paddingLeft, thumbOffset).coerceAtLeast(0)
         val right =
             if (hasValidBounds) b.right
-            else (width - paddingRight - thumbOffset).coerceAtLeast(left + 1)
+            else (width - max(paddingRight, thumbOffset)).coerceAtLeast(left + 1)
 
         val contentTop = paddingTop
         val contentBottom = (height - paddingBottom).coerceAtLeast(contentTop + 1)
@@ -96,32 +97,28 @@ class SegmentedSeekBar : AppCompatSeekBar {
         if (segments.isEmpty()) return
 
         val bounds = progressDrawable?.bounds ?: return
-        val width = bounds.width().toFloat()
-        if (width <= 1f) return
-
         val top = bounds.top.toFloat()
         val bottom = bounds.bottom.toFloat()
 
-        // AbsSeekBar draws the track inset by thumbOffset so the thumb doesn't overflow at the ends.
-        // Use the same horizontal range for segment markers; otherwise markers won't align with the thumb/progress.
-        val leftBase = bounds.left.toFloat()
-        val rightBase = bounds.right.toFloat()
-        if (rightBase - leftBase <= 1f) return
+        // Prefer a geometry derived from view paddings + thumbOffset rather than Drawable bounds.
+        // When progressDrawable is replaced at runtime, its bounds can temporarily be out-of-sync with the SeekBar's
+        // thumb/progress mapping, which makes segment markers look "early/late" compared to the preview time.
+        val leftInset = max(paddingLeft, thumbOffset).toFloat()
+        val rightInset = max(paddingRight, thumbOffset).toFloat()
+        val leftBase = leftInset
+        val rightBase = (width.toFloat() - rightInset)
+        val range = rightBase - leftBase
+        if (range <= 1f) return
 
         for (seg in segments) {
             val start = seg.startFraction.coerceIn(0f, 1f)
             val end = seg.endFraction.coerceIn(0f, 1f)
             if (end <= start) continue
-            val range = rightBase - leftBase
             val (l, r) =
                 if (layoutDirection == View.LAYOUT_DIRECTION_RTL) {
-                    val lRtl = rightBase - range * end
-                    val rRtl = rightBase - range * start
-                    lRtl to rRtl
+                    (rightBase - range * end) to (rightBase - range * start)
                 } else {
-                    val lLtr = leftBase + range * start
-                    val rLtr = leftBase + range * end
-                    lLtr to rLtr
+                    (leftBase + range * start) to (leftBase + range * end)
                 }
             tmpRect.set(l, top, r, bottom)
             canvas.drawRect(tmpRect, segmentPaint)
