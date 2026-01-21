@@ -52,6 +52,7 @@ import blbl.cat3399.core.ui.ActivityStackLimiter
 import blbl.cat3399.core.ui.Immersive
 import blbl.cat3399.core.ui.SingleChoiceDialog
 import blbl.cat3399.core.ui.UiScale
+import blbl.cat3399.core.util.Format as BlblFormat
 import blbl.cat3399.feature.following.UpDetailActivity
 import blbl.cat3399.feature.settings.SettingsActivity
 import blbl.cat3399.databinding.ActivityPlayerBinding
@@ -220,6 +221,7 @@ class PlayerActivity : AppCompatActivity() {
         setContentView(binding.root)
         Immersive.apply(this, BiliClient.prefs.fullscreenEnabled)
         applyUiMode()
+        binding.topBar.setBackgroundResource(R.drawable.bg_player_top_scrim_strong)
 
         // Re-apply after layout changes so content-based auto-scale can take effect.
         binding.playerView.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
@@ -237,6 +239,10 @@ class PlayerActivity : AppCompatActivity() {
         binding.tvSeekHint.visibility = View.GONE
         binding.btnBack.setOnClickListener { finish() }
         binding.tvOnline.text = "-人正在观看"
+        binding.llTitleMeta.visibility = View.VISIBLE
+        binding.tvViewCount.text = "-"
+        binding.tvPubdate.text = ""
+        binding.tvPubdate.visibility = View.GONE
 
         val bvid = intent.getStringExtra(EXTRA_BVID).orEmpty()
         val cidExtra = intent.getLongExtra(EXTRA_CID, -1L).takeIf { it > 0 }
@@ -770,10 +776,14 @@ class PlayerActivity : AppCompatActivity() {
                     append('-')
                     append((System.currentTimeMillis() and 0xFFFF).toString(16))
                 },
-            )
+        )
 
         binding.tvTitle.text = initialTitle?.takeIf { it.isNotBlank() } ?: "-"
         binding.tvOnline.text = "-人正在观看"
+        binding.tvViewCount.text = "-"
+        binding.llViewMeta.visibility = View.VISIBLE
+        binding.tvPubdate.text = ""
+        binding.tvPubdate.visibility = View.GONE
         resetPlaybackStateForNewMedia(exo)
 
         updatePlaylistControls()
@@ -797,6 +807,7 @@ class PlayerActivity : AppCompatActivity() {
                     if (title.isNotBlank()) binding.tvTitle.text = title
                     currentViewDurationMs = viewData.optLong("duration", -1L).takeIf { it > 0 }?.times(1000L)
                     applyUpInfo(viewData)
+                    applyTitleMeta(viewData)
 
                     val cid = cidExtra ?: viewData.optLong("cid").takeIf { it > 0 } ?: error("cid missing")
                     val aid = viewData.optLong("aid").takeIf { it > 0 }
@@ -1477,6 +1488,26 @@ class PlayerActivity : AppCompatActivity() {
         currentUpName = owner.optString("name", "").trim().takeIf { it.isNotBlank() }
         currentUpAvatar = owner.optString("face", "").trim().takeIf { it.isNotBlank() }
         updateUpButton()
+    }
+
+    private fun applyTitleMeta(viewData: JSONObject) {
+        val viewCount =
+            viewData
+                .optJSONObject("stat")
+                ?.optLong("view", -1L)
+                ?.takeIf { it >= 0L }
+
+        if (viewCount != null) {
+            binding.llViewMeta.visibility = View.VISIBLE
+            binding.tvViewCount.text = BlblFormat.count(viewCount)
+        } else {
+            binding.llViewMeta.visibility = View.GONE
+        }
+
+        val pubDateSec = viewData.optLong("pubdate", 0L).takeIf { it > 0L }
+        val pubDateText = pubDateSec?.let { BlblFormat.pubDateText(it) }.orEmpty()
+        binding.tvPubdate.text = pubDateText
+        binding.tvPubdate.visibility = if (pubDateText.isNotBlank()) View.VISIBLE else View.GONE
     }
 
     private fun seekRelative(deltaMs: Long) {
@@ -3878,13 +3909,19 @@ class PlayerActivity : AppCompatActivity() {
 
         val topPadH = scaledPx(if (tvMode) R.dimen.player_top_bar_padding_h_tv else R.dimen.player_top_bar_padding_h)
         val topPadV = scaledPx(if (tvMode) R.dimen.player_top_bar_padding_v_tv else R.dimen.player_top_bar_padding_v)
+        val topPadTopExtra =
+            scaledPx(
+                if (tvMode) R.dimen.player_top_bar_padding_top_extra_tv else R.dimen.player_top_bar_padding_top_extra,
+            )
+        val topPadTop = topPadV + topPadTopExtra
+        val topPadBottom = topPadV
         if (
             binding.topBar.paddingLeft != topPadH ||
             binding.topBar.paddingRight != topPadH ||
-            binding.topBar.paddingTop != topPadV ||
-            binding.topBar.paddingBottom != topPadV
+            binding.topBar.paddingTop != topPadTop ||
+            binding.topBar.paddingBottom != topPadBottom
         ) {
-            binding.topBar.setPadding(topPadH, topPadV, topPadH, topPadV)
+            binding.topBar.setPadding(topPadH, topPadTop, topPadH, topPadBottom)
         }
 
         val topBtnSize = scaledPx(if (tvMode) R.dimen.player_top_button_size_tv else R.dimen.player_top_button_size).coerceAtLeast(1)
@@ -3912,6 +3949,37 @@ class PlayerActivity : AppCompatActivity() {
             TypedValue.COMPLEX_UNIT_PX,
             scaledPxF(if (tvMode) R.dimen.player_online_text_size_tv else R.dimen.player_online_text_size),
         )
+
+        run {
+            val ms = scaledPx(if (tvMode) R.dimen.player_title_margin_start_tv else R.dimen.player_title_margin_start)
+            val me = scaledPx(if (tvMode) R.dimen.player_title_margin_end_tv else R.dimen.player_title_margin_end)
+            val mt = scaledPx(if (tvMode) R.dimen.player_title_meta_margin_top_tv else R.dimen.player_title_meta_margin_top)
+            (binding.llTitleMeta.layoutParams as? MarginLayoutParams)?.let { lp ->
+                if (lp.marginStart != ms || lp.marginEnd != me || lp.topMargin != mt) {
+                    lp.marginStart = ms
+                    lp.marginEnd = me
+                    lp.topMargin = mt
+                    binding.llTitleMeta.layoutParams = lp
+                }
+            }
+            val pb = scaledPx(if (tvMode) R.dimen.player_title_meta_padding_bottom_tv else R.dimen.player_title_meta_padding_bottom)
+            if (binding.llTitleMeta.paddingBottom != pb) {
+                binding.llTitleMeta.setPadding(
+                    binding.llTitleMeta.paddingLeft,
+                    binding.llTitleMeta.paddingTop,
+                    binding.llTitleMeta.paddingRight,
+                    pb,
+                )
+            }
+            val metaTextSizePx = scaledPxF(if (tvMode) R.dimen.player_online_text_size_tv else R.dimen.player_online_text_size)
+            binding.tvViewCount.setTextSize(TypedValue.COMPLEX_UNIT_PX, metaTextSizePx)
+            binding.tvPubdate.setTextSize(TypedValue.COMPLEX_UNIT_PX, metaTextSizePx)
+            val metaIconSize =
+                scaledPx(if (tvMode) R.dimen.video_card_stat_icon_size_tv else R.dimen.video_card_stat_icon_size)
+                    .coerceAtLeast(1)
+            setSize(binding.ivOnlineIcon, metaIconSize, metaIconSize)
+            setSize(binding.ivViewIcon, metaIconSize, metaIconSize)
+        }
 
         val bottomPadV = scaledPx(if (tvMode) R.dimen.player_bottom_bar_padding_v_tv else R.dimen.player_bottom_bar_padding_v)
         if (binding.bottomBar.paddingTop != bottomPadV || binding.bottomBar.paddingBottom != bottomPadV) {

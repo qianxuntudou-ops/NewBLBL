@@ -97,6 +97,7 @@ class LivePlayerActivity : AppCompatActivity() {
         binding.btnPrev.visibility = View.GONE
         binding.btnNext.visibility = View.GONE
         binding.tvOnline.visibility = View.GONE
+        binding.llTitleMeta.visibility = View.GONE
         binding.btnUp.visibility = View.GONE
         binding.btnLike.visibility = View.GONE
         binding.btnCoin.visibility = View.GONE

@@ -144,6 +144,9 @@
     <dimen name="player_top_bar_padding_h_tv">10dp</dimen>
     <dimen name="player_top_bar_padding_v_tv">2dp</dimen>
 
+    <dimen name="player_top_bar_padding_top_extra">10dp</dimen>
+    <dimen name="player_top_bar_padding_top_extra_tv">14dp</dimen>
+
     <dimen name="player_top_button_size">36dp</dimen>
     <dimen name="player_top_button_size_tv">50dp</dimen>
     <dimen name="player_top_button_padding">4dp</dimen>
@@ -158,6 +161,11 @@
 
     <dimen name="player_online_text_size">12sp</dimen>
     <dimen name="player_online_text_size_tv">16sp</dimen>
+
+    <dimen name="player_title_meta_margin_top">2dp</dimen>
+    <dimen name="player_title_meta_margin_top_tv">4dp</dimen>
+    <dimen name="player_title_meta_padding_bottom">0dp</dimen>
+    <dimen name="player_title_meta_padding_bottom_tv">0dp</dimen>
 
     <dimen name="player_bottom_bar_padding_v">4dp</dimen>
     <dimen name="player_bottom_bar_padding_v_tv">8dp</dimen>
