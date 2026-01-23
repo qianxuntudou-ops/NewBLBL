@@ -1,6 +1,8 @@
 package blbl.cat3399.feature.settings
 
 import android.app.ActivityManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -50,6 +52,9 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var leftAdapter: SettingsLeftAdapter
     private lateinit var rightAdapter: SettingsEntryAdapter
     private var testUpdateJob: Job? = null
+    private var testUpdateCheckJob: Job? = null
+    private var testUpdateCheckState: TestUpdateCheckState = TestUpdateCheckState.Idle
+    private var testUpdateCheckedAtMs: Long = -1L
     private var clearCacheJob: Job? = null
     private var cacheSizeJob: Job? = null
     private var cacheSizeBytes: Long? = null
@@ -61,6 +66,18 @@ class SettingsActivity : AppCompatActivity() {
     private var pendingRestoreLeftIndex: Int? = null
     private var pendingRestoreBack: Boolean = false
     private var focusRequestToken: Int = 0
+
+    private sealed interface TestUpdateCheckState {
+        data object Idle : TestUpdateCheckState
+
+        data object Checking : TestUpdateCheckState
+
+        data class Latest(val latestVersion: String) : TestUpdateCheckState
+
+        data class UpdateAvailable(val latestVersion: String) : TestUpdateCheckState
+
+        data class Error(val message: String) : TestUpdateCheckState
+    }
 
     private val gaiaVgateLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -285,11 +302,16 @@ class SettingsActivity : AppCompatActivity() {
                 SettingEntry("允许特殊弹幕", if (prefs.danmakuAllowSpecial) "开" else "关", null),
             )
 
-            "关于应用" -> listOf(
-                SettingEntry("版本", BuildConfig.VERSION_NAME, null),
-                SettingEntry("日志标签", "BLBL", "用于 Logcat 过滤"),
-                SettingEntry("更新测试版本", "点击更新", "从内置直链下载 APK 并安装（限速）"),
-            )
+            "关于应用" -> {
+                ensureTestUpdateChecked(force = false, refreshUi = false)
+                listOf(
+                    SettingEntry("版本", BuildConfig.VERSION_NAME, null),
+                    SettingEntry("项目地址", PROJECT_URL, null),
+                    SettingEntry("QQ交流群", QQ_GROUP, null),
+                    SettingEntry("日志标签", "BLBL", "用于 Logcat 过滤"),
+                    aboutUpdateEntry(),
+                )
+            }
 
             "设备信息" -> listOf(
                 SettingEntry("CPU", Build.SUPPORTED_ABIS.firstOrNull().orEmpty(), null),
@@ -669,7 +691,25 @@ class SettingsActivity : AppCompatActivity() {
                 refreshSection(entry.title)
             }
 
-            "更新测试版本" -> showTestUpdateDialog()
+            "项目地址" -> showProjectDialog()
+
+            "QQ交流群" -> {
+                copyToClipboard(label = "QQ交流群", text = QQ_GROUP, toastText = "已复制群号：$QQ_GROUP")
+            }
+
+            "检查更新" -> {
+                when (val state = testUpdateCheckState) {
+                    TestUpdateCheckState.Checking -> {
+                        Toast.makeText(this, "正在检查更新…", Toast.LENGTH_SHORT).show()
+                    }
+
+                    is TestUpdateCheckState.UpdateAvailable -> {
+                        startTestUpdateDownload(latestVersionHint = state.latestVersion)
+                    }
+
+                    else -> ensureTestUpdateChecked(force = true, refreshUi = true)
+                }
+            }
 
             else -> AppLog.i("Settings", "click ${entry.title}")
         }
@@ -848,7 +888,106 @@ class SettingsActivity : AppCompatActivity() {
         return false
     }
 
-    private fun showTestUpdateDialog() {
+    private fun showProjectDialog() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("项目地址")
+            .setMessage(PROJECT_URL)
+            .setPositiveButton("打开") { _, _ -> openUrl(PROJECT_URL) }
+            .setNeutralButton("复制") { _, _ ->
+                copyToClipboard(label = "项目地址", text = PROJECT_URL, toastText = "已复制项目地址")
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    private fun openUrl(url: String) {
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW).setData(Uri.parse(url)))
+        }.onFailure {
+            Toast.makeText(this, "无法打开链接", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun copyToClipboard(label: String, text: String, toastText: String? = null) {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        if (clipboard == null) {
+            Toast.makeText(this, "无法访问剪贴板", Toast.LENGTH_SHORT).show()
+            return
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+        Toast.makeText(this, toastText ?: "已复制：$text", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun refreshAboutSectionKeepPosition() {
+        if (sections.getOrNull(currentSectionIndex) != "关于应用") return
+        showSection(currentSectionIndex, keepScroll = true, focusTitle = lastFocusedRightTitle)
+    }
+
+    private fun ensureTestUpdateChecked(force: Boolean, refreshUi: Boolean = true) {
+        if (testUpdateJob?.isActive == true) return
+        if (testUpdateCheckJob?.isActive == true) return
+        if (testUpdateCheckState is TestUpdateCheckState.Checking) return
+
+        val now = System.currentTimeMillis()
+        val last = testUpdateCheckedAtMs
+        val hasFreshResult =
+            !force &&
+                last > 0 &&
+                now - last < UPDATE_CHECK_TTL_MS &&
+                testUpdateCheckState !is TestUpdateCheckState.Idle &&
+                testUpdateCheckState !is TestUpdateCheckState.Checking
+        if (hasFreshResult) return
+
+        testUpdateCheckState = TestUpdateCheckState.Checking
+        if (refreshUi) refreshAboutSectionKeepPosition()
+
+        testUpdateCheckJob =
+            lifecycleScope.launch {
+                try {
+                    val latest = TestApkUpdater.fetchLatestVersionName()
+                    val current = BuildConfig.VERSION_NAME
+                    testUpdateCheckState =
+                        if (TestApkUpdater.isRemoteNewer(latest, current)) {
+                            TestUpdateCheckState.UpdateAvailable(latest)
+                        } else {
+                            TestUpdateCheckState.Latest(latest)
+                        }
+                    testUpdateCheckedAtMs = System.currentTimeMillis()
+                } catch (_: CancellationException) {
+                    return@launch
+                } catch (t: Throwable) {
+                    testUpdateCheckState = TestUpdateCheckState.Error(t.message ?: "检查失败")
+                    testUpdateCheckedAtMs = System.currentTimeMillis()
+                }
+                refreshAboutSectionKeepPosition()
+            }
+    }
+
+    private fun aboutUpdateEntry(): SettingEntry {
+        val currentVersion = BuildConfig.VERSION_NAME
+        val title = "检查更新"
+        val defaultDesc = "从内置直链下载 APK 并覆盖安装（限速）"
+        return when (val state = testUpdateCheckState) {
+            TestUpdateCheckState.Idle -> SettingEntry(title, "点击检查", defaultDesc)
+            TestUpdateCheckState.Checking -> SettingEntry(title, "检查中…", "正在获取最新版本号…")
+
+            is TestUpdateCheckState.Latest -> {
+                SettingEntry(title, "已是最新版", "当前：$currentVersion / 最新：${state.latestVersion}")
+            }
+
+            is TestUpdateCheckState.UpdateAvailable -> {
+                SettingEntry(title, "新版本 ${state.latestVersion}", "当前：$currentVersion，点击更新")
+            }
+
+            is TestUpdateCheckState.Error -> {
+                val msg = state.message.trim().take(80)
+                val desc = if (msg.isBlank()) "检查失败，点击重试" else "检查失败，点击重试（$msg）"
+                SettingEntry(title, "检查失败", desc)
+            }
+        }
+    }
+
+    private fun startTestUpdateDownload(latestVersionHint: String? = null) {
         if (testUpdateJob?.isActive == true) {
             Toast.makeText(this, "正在下载更新…", Toast.LENGTH_SHORT).show()
             return
@@ -872,20 +1011,6 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
 
-        MaterialAlertDialogBuilder(this)
-            .setTitle("更新测试版本")
-            .setMessage(
-                buildString {
-                    append("将从内置直链下载 APK 并调用系统安装器覆盖安装。\n\n")
-                    append("注意：需要允许“安装未知应用”。")
-                },
-            )
-            .setPositiveButton("开始下载") { _, _ -> startTestUpdateDownload() }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun startTestUpdateDownload() {
         val now = System.currentTimeMillis()
         val cooldownLeftMs = TestApkUpdater.cooldownLeftMs(now)
         if (cooldownLeftMs > 0) {
@@ -898,7 +1023,7 @@ class SettingsActivity : AppCompatActivity() {
         val progress = view.findViewById<LinearProgressIndicator>(blbl.cat3399.R.id.progress)
         progress.isIndeterminate = true
         progress.max = 100
-        tvStatus.text = "准备下载…"
+        tvStatus.text = "检查更新…"
 
         val dialog =
             MaterialAlertDialogBuilder(this)
@@ -908,10 +1033,32 @@ class SettingsActivity : AppCompatActivity() {
                 .setCancelable(false)
                 .show()
 
-        TestApkUpdater.markStarted(now)
         testUpdateJob =
             lifecycleScope.launch {
                 try {
+                    val currentVersion = BuildConfig.VERSION_NAME
+                    val latestVersion = latestVersionHint ?: TestApkUpdater.fetchLatestVersionName()
+                    if (!TestApkUpdater.isRemoteNewer(latestVersion, currentVersion)) {
+                        testUpdateCheckState = TestUpdateCheckState.Latest(latestVersion)
+                        testUpdateCheckedAtMs = System.currentTimeMillis()
+                        refreshAboutSectionKeepPosition()
+                        runOnUiThread {
+                            dialog.dismiss()
+                            Toast.makeText(this@SettingsActivity, "已是最新版（当前：$currentVersion）", Toast.LENGTH_SHORT).show()
+                        }
+                        return@launch
+                    }
+
+                    testUpdateCheckState = TestUpdateCheckState.UpdateAvailable(latestVersion)
+                    testUpdateCheckedAtMs = System.currentTimeMillis()
+                    refreshAboutSectionKeepPosition()
+
+                    runOnUiThread {
+                        tvStatus.text = "准备下载…（最新：$latestVersion）"
+                        progress.isIndeterminate = true
+                    }
+
+                    TestApkUpdater.markStarted(now)
                     val apkFile =
                         TestApkUpdater.downloadApkToCache(
                             context = this@SettingsActivity,
@@ -1271,5 +1418,11 @@ class SettingsActivity : AppCompatActivity() {
         6 -> "240P 极速"
         100 -> "智能修复"
         else -> qn.toString()
+    }
+
+    companion object {
+        private const val PROJECT_URL = "https://github.com/cat3399/blbl"
+        private const val QQ_GROUP = "1080221910"
+        private const val UPDATE_CHECK_TTL_MS = 60_000L
     }
 }

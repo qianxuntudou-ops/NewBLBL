@@ -22,6 +22,8 @@ object TestApkUpdater {
     private const val RELEASE_APK_URL = "http://8.152.215.14:13901/app-release.apk"
     val TEST_APK_URL: String
         get() = if (BuildConfig.DEBUG) DEBUG_APK_URL else RELEASE_APK_URL
+    val TEST_APK_VERSION_URL: String
+        get() = "${TEST_APK_URL.substringBeforeLast('/')}/version"
 
     private const val COOLDOWN_MS = 5_000L
     private const val MAX_BYTES_PER_SECOND: Long = 2L * 1024 * 1024
@@ -70,6 +72,28 @@ object TestApkUpdater {
         val last = lastStartedAtMs
         val left = (last + COOLDOWN_MS) - nowMs
         return left.coerceAtLeast(0)
+    }
+
+    suspend fun fetchLatestVersionName(
+        url: String = TEST_APK_VERSION_URL,
+    ): String {
+        val req = Request.Builder().url(url).get().build()
+        val call = okHttp.newCall(req)
+        val res = call.await()
+        res.use { r ->
+            check(r.isSuccessful) { "HTTP ${r.code} ${r.message}" }
+            val body = r.body ?: error("empty body")
+            val versionName = body.string().trim()
+            check(versionName.isNotBlank()) { "版本号为空" }
+            check(parseVersion(versionName) != null) { "版本号格式不正确：$versionName" }
+            return versionName
+        }
+    }
+
+    fun isRemoteNewer(remoteVersionName: String, currentVersionName: String = BuildConfig.VERSION_NAME): Boolean {
+        val remote = parseVersion(remoteVersionName) ?: return false
+        val current = parseVersion(currentVersionName) ?: return remoteVersionName.trim() != currentVersionName.trim()
+        return compareVersion(remote, current) > 0
     }
 
     suspend fun downloadApkToCache(
@@ -176,5 +200,28 @@ object TestApkUpdater {
         if (mb < 1024) return String.format(Locale.US, "%.1fMB", mb)
         val gb = mb / 1024.0
         return String.format(Locale.US, "%.2fGB", gb)
+    }
+
+    private fun parseVersion(raw: String): List<Int>? {
+        val cleaned = raw.trim().removePrefix("v")
+        val digitsOnly =
+            cleaned.takeWhile { ch ->
+                ch.isDigit() || ch == '.'
+            }
+        if (digitsOnly.isBlank()) return null
+        val parts = digitsOnly.split('.').filter { it.isNotBlank() }
+        if (parts.isEmpty()) return null
+        val nums = parts.map { it.toIntOrNull() ?: return null }
+        return nums
+    }
+
+    private fun compareVersion(a: List<Int>, b: List<Int>): Int {
+        val max = maxOf(a.size, b.size)
+        for (i in 0 until max) {
+            val ai = a.getOrElse(i) { 0 }
+            val bi = b.getOrElse(i) { 0 }
+            if (ai != bi) return ai.compareTo(bi)
+        }
+        return 0
     }
 }
