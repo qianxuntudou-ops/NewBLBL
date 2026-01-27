@@ -17,14 +17,15 @@ fun Fragment.openUpDetailFromVideoCard(card: VideoCard) {
         return
     }
 
-    if (card.bvid.isBlank()) {
+    val safeAid = card.aid?.takeIf { it > 0L }
+    if (card.bvid.isBlank() && safeAid == null) {
         Toast.makeText(requireContext(), "未获取到 UP 主信息", Toast.LENGTH_SHORT).show()
         return
     }
 
     lifecycleScope.launch {
         try {
-            val json = BiliApi.view(card.bvid)
+            val json = if (card.bvid.isNotBlank()) BiliApi.view(card.bvid) else BiliApi.view(safeAid ?: 0L)
             val code = json.optInt("code", 0)
             if (code != 0) {
                 val msg = json.optString("message", json.optString("msg", ""))

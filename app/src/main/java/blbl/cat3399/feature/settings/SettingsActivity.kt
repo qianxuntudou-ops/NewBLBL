@@ -271,6 +271,7 @@ class SettingsActivity : BaseActivity() {
                 SettingEntry("默认播放速度", String.format(Locale.US, "%.2fx", prefs.playerSpeed), null),
                 SettingEntry("自动跳到上次播放位置", if (prefs.playerAutoResumeEnabled) "开" else "关", null),
                 SettingEntry("自动跳过片段（空降助手）", if (prefs.playerAutoSkipSegmentsEnabled) "开" else "关", null),
+                SettingEntry("播放前打开详情页", if (prefs.playerOpenDetailBeforePlay) "开" else "关", "点击视频卡片后先进入详情页"),
                 SettingEntry("播放模式", playbackModeText(prefs.playerPlaybackMode), null),
                 SettingEntry("字幕语言", subtitleLangText(prefs.subtitlePreferredLang), null),
                 SettingEntry("默认开启字幕", if (prefs.subtitleEnabledDefault) "开" else "关", null),
@@ -597,6 +598,11 @@ class SettingsActivity : BaseActivity() {
 
             "自动跳过片段（空降助手）" -> {
                 prefs.playerAutoSkipSegmentsEnabled = !prefs.playerAutoSkipSegmentsEnabled
+                refreshSection(entry.title)
+            }
+
+            "播放前打开详情页" -> {
+                prefs.playerOpenDetailBeforePlay = !prefs.playerOpenDetailBeforePlay
                 refreshSection(entry.title)
             }
 

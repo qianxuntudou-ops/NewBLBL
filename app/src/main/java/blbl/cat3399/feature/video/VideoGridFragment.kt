@@ -16,6 +16,7 @@ import androidx.recyclerview.widget.RecyclerView
 import blbl.cat3399.R
 import blbl.cat3399.core.api.BiliApi
 import blbl.cat3399.core.log.AppLog
+import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.ui.TabSwitchFocusTarget
 import blbl.cat3399.databinding.FragmentVideoGridBinding
 import blbl.cat3399.feature.following.openUpDetailFromVideoCard
@@ -74,13 +75,31 @@ class VideoGridFragment : Fragment(), RefreshKeyHandler, TabSwitchFocusTarget {
                                 )
                             }
                         val token = PlayerPlaylistStore.put(items = playlistItems, index = pos, source = "VideoGrid:$source/$rid")
-                        startActivity(
-                            Intent(requireContext(), PlayerActivity::class.java)
-                                .putExtra(PlayerActivity.EXTRA_BVID, card.bvid)
-                                .putExtra(PlayerActivity.EXTRA_CID, card.cid ?: -1L)
-                                .putExtra(PlayerActivity.EXTRA_PLAYLIST_TOKEN, token)
-                                .putExtra(PlayerActivity.EXTRA_PLAYLIST_INDEX, pos),
-                        )
+                        if (BiliClient.prefs.playerOpenDetailBeforePlay) {
+                            startActivity(
+                                Intent(requireContext(), VideoDetailActivity::class.java)
+                                    .putExtra(VideoDetailActivity.EXTRA_BVID, card.bvid)
+                                    .putExtra(VideoDetailActivity.EXTRA_CID, card.cid ?: -1L)
+                                    .apply { card.aid?.let { putExtra(VideoDetailActivity.EXTRA_AID, it) } }
+                                    .putExtra(VideoDetailActivity.EXTRA_TITLE, card.title)
+                                    .putExtra(VideoDetailActivity.EXTRA_COVER_URL, card.coverUrl)
+                                    .apply {
+                                        card.ownerName.takeIf { it.isNotBlank() }?.let { putExtra(VideoDetailActivity.EXTRA_OWNER_NAME, it) }
+                                        card.ownerFace?.takeIf { it.isNotBlank() }?.let { putExtra(VideoDetailActivity.EXTRA_OWNER_AVATAR, it) }
+                                        card.ownerMid?.takeIf { it > 0L }?.let { putExtra(VideoDetailActivity.EXTRA_OWNER_MID, it) }
+                                    }
+                                    .putExtra(VideoDetailActivity.EXTRA_PLAYLIST_TOKEN, token)
+                                    .putExtra(VideoDetailActivity.EXTRA_PLAYLIST_INDEX, pos),
+                            )
+                        } else {
+                            startActivity(
+                                Intent(requireContext(), PlayerActivity::class.java)
+                                    .putExtra(PlayerActivity.EXTRA_BVID, card.bvid)
+                                    .putExtra(PlayerActivity.EXTRA_CID, card.cid ?: -1L)
+                                    .putExtra(PlayerActivity.EXTRA_PLAYLIST_TOKEN, token)
+                                    .putExtra(PlayerActivity.EXTRA_PLAYLIST_INDEX, pos),
+                            )
+                        }
                     },
                     onLongClick = { card, _ ->
                         openUpDetailFromVideoCard(card)

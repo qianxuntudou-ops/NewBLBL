@@ -45,7 +45,7 @@ class VideoCardAdapter(
 
     fun snapshot(): List<VideoCard> = items.toList()
 
-    override fun getItemId(position: Int): Long = items[position].bvid.hashCode().toLong()
+    override fun getItemId(position: Int): Long = items[position].stableKey().hashCode().toLong()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Vh {
         val binding = ItemVideoCardBinding.inflate(LayoutInflater.from(parent.context), parent, false)

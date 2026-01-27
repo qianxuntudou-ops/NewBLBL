@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.button.MaterialButton xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/btn"
+    android:layout_width="wrap_content"
+    android:layout_height="40dp"
+    android:layout_margin="6dp"
+    android:ellipsize="end"
+    android:maxLines="1"
+    android:minWidth="120dp"
+    android:stateListAnimator="@animator/blbl_focus_scale"
+    android:textAllCaps="false"
+    app:cornerRadius="20dp" />
+

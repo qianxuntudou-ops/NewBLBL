@@ -17,11 +17,14 @@ import androidx.recyclerview.widget.SimpleItemAnimator
 import blbl.cat3399.R
 import blbl.cat3399.core.api.BiliApi
 import blbl.cat3399.core.log.AppLog
+import blbl.cat3399.core.model.VideoCard
+import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.databinding.FragmentVideoGridBinding
 import blbl.cat3399.feature.following.openUpDetailFromVideoCard
 import blbl.cat3399.feature.player.PlayerActivity
 import blbl.cat3399.feature.player.PlayerPlaylistItem
 import blbl.cat3399.feature.player.PlayerPlaylistStore
+import blbl.cat3399.feature.video.VideoDetailActivity
 import blbl.cat3399.feature.video.VideoCardAdapter
 import blbl.cat3399.ui.RefreshKeyHandler
 import kotlinx.coroutines.launch
@@ -32,7 +35,7 @@ class MyHistoryFragment : Fragment(), MyTabSwitchFocusTarget, RefreshKeyHandler 
 
     private lateinit var adapter: VideoCardAdapter
 
-    private val loadedBvids = HashSet<String>()
+    private val loadedKeys = HashSet<String>()
     private var isLoadingMore: Boolean = false
     private var endReached: Boolean = false
     private var requestToken: Int = 0
@@ -59,17 +62,43 @@ class MyHistoryFragment : Fragment(), MyTabSwitchFocusTarget, RefreshKeyHandler 
                                 PlayerPlaylistItem(
                                     bvid = it.bvid,
                                     cid = it.cid,
+                                    epId = it.epId,
+                                    aid = it.aid,
                                     title = it.title,
                                 )
                             }
                         val token = PlayerPlaylistStore.put(items = playlistItems, index = pos, source = "MyHistory")
-                        startActivity(
-                            Intent(requireContext(), PlayerActivity::class.java)
-                                .putExtra(PlayerActivity.EXTRA_BVID, card.bvid)
-                                .putExtra(PlayerActivity.EXTRA_CID, card.cid ?: -1L)
-                                .putExtra(PlayerActivity.EXTRA_PLAYLIST_TOKEN, token)
-                                .putExtra(PlayerActivity.EXTRA_PLAYLIST_INDEX, pos),
-                        )
+                        val canOpenDetail =
+                            BiliClient.prefs.playerOpenDetailBeforePlay &&
+                                card.bvid.isNotBlank() &&
+                                (card.epId == null || card.epId <= 0L)
+                        if (canOpenDetail) {
+                            startActivity(
+                                Intent(requireContext(), VideoDetailActivity::class.java)
+                                    .putExtra(VideoDetailActivity.EXTRA_BVID, card.bvid)
+                                    .putExtra(VideoDetailActivity.EXTRA_CID, card.cid ?: -1L)
+                                    .apply { card.aid?.let { putExtra(VideoDetailActivity.EXTRA_AID, it) } }
+                                    .putExtra(VideoDetailActivity.EXTRA_TITLE, card.title)
+                                    .putExtra(VideoDetailActivity.EXTRA_COVER_URL, card.coverUrl)
+                                    .apply {
+                                        card.ownerName.takeIf { it.isNotBlank() }?.let { putExtra(VideoDetailActivity.EXTRA_OWNER_NAME, it) }
+                                        card.ownerFace?.takeIf { it.isNotBlank() }?.let { putExtra(VideoDetailActivity.EXTRA_OWNER_AVATAR, it) }
+                                        card.ownerMid?.takeIf { it > 0L }?.let { putExtra(VideoDetailActivity.EXTRA_OWNER_MID, it) }
+                                    }
+                                    .putExtra(VideoDetailActivity.EXTRA_PLAYLIST_TOKEN, token)
+                                    .putExtra(VideoDetailActivity.EXTRA_PLAYLIST_INDEX, pos),
+                            )
+                        } else {
+                            startActivity(
+                                Intent(requireContext(), PlayerActivity::class.java)
+                                    .putExtra(PlayerActivity.EXTRA_BVID, card.bvid)
+                                    .putExtra(PlayerActivity.EXTRA_CID, card.cid ?: -1L)
+                                    .apply { card.epId?.let { putExtra(PlayerActivity.EXTRA_EP_ID, it) } }
+                                    .apply { card.aid?.let { putExtra(PlayerActivity.EXTRA_AID, it) } }
+                                    .putExtra(PlayerActivity.EXTRA_PLAYLIST_TOKEN, token)
+                                    .putExtra(PlayerActivity.EXTRA_PLAYLIST_INDEX, pos),
+                            )
+                        }
                     },
                     onLongClick = { card, _ ->
                         openUpDetailFromVideoCard(card)
@@ -271,7 +300,7 @@ class MyHistoryFragment : Fragment(), MyTabSwitchFocusTarget, RefreshKeyHandler 
     }
 
     private fun resetAndLoad() {
-        loadedBvids.clear()
+        loadedKeys.clear()
         isLoadingMore = false
         endReached = false
         cursor = null
@@ -286,30 +315,38 @@ class MyHistoryFragment : Fragment(), MyTabSwitchFocusTarget, RefreshKeyHandler 
         isLoadingMore = true
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val c = cursor
-                val page =
-                    BiliApi.historyCursor(
-                        max = c?.max ?: 0,
-                        business = c?.business,
-                        viewAt = c?.viewAt ?: 0,
-                        ps = 24,
-                    )
-                if (token != requestToken) return@launch
+                var c = cursor
+                var filtered = emptyList<VideoCard>()
+                var attempts = 0
+                while (attempts < 5) {
+                    val page =
+                        BiliApi.historyCursor(
+                            max = c?.max ?: 0,
+                            business = c?.business,
+                            viewAt = c?.viewAt ?: 0,
+                            ps = 24,
+                        )
+                    if (token != requestToken) return@launch
 
-                cursor = page.cursor
-                if (page.items.isEmpty()) {
+                    val nextCursor = page.cursor
+                    cursor = nextCursor
+                    filtered = page.items.filter { loadedKeys.add(it.stableKey()) }
+                    if (filtered.isNotEmpty() || nextCursor == null) break
+                    if (nextCursor == c) break
+                    c = nextCursor
+                    attempts++
+                }
+                if (filtered.isEmpty()) {
                     endReached = true
                     return@launch
                 }
 
-                val filtered = page.items.filter { loadedBvids.add(it.bvid) }
                 if (isRefresh) adapter.submit(filtered) else adapter.append(filtered)
                 _binding?.recycler?.post {
                     maybeConsumePendingFocusFirstItemFromTabSwitch()
                     maybeConsumePendingFocusNextCardAfterLoadMoreFromDpad()
                 }
 
-                if (filtered.isEmpty()) endReached = true
             } catch (t: Throwable) {
                 AppLog.e("MyHistory", "load failed", t)
                 context?.let { Toast.makeText(it, "加载失败，可查看 Logcat(标签 BLBL)", Toast.LENGTH_SHORT).show() }

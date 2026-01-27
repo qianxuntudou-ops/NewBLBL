@@ -1121,9 +1121,16 @@ object BiliApi {
                     val it = list.optJSONObject(i) ?: continue
                     val history = it.optJSONObject("history") ?: JSONObject()
                     val businessType = history.optString("business", "")
-                    if (businessType != "archive") continue
+                    if (businessType != "archive" && businessType != "pgc") continue
+
                     val bvid = history.optString("bvid", "").trim()
-                    if (bvid.isBlank()) continue
+                    val aid = history.optLong("oid").takeIf { v -> v > 0 }
+                    val cid = history.optLong("cid").takeIf { v -> v > 0 }
+                    val epId = history.optLong("epid").takeIf { v -> v > 0 }
+
+                    // For archive items bvid should exist; for PGC items bvid may be absent so we fall back to aid/epId.
+                    if (businessType == "archive" && bvid.isBlank()) continue
+                    if (businessType == "pgc" && (epId == null || cid == null) && (bvid.isBlank() && aid == null)) continue
 
                     val covers = it.optJSONArray("covers")
                     val coverUrl =
@@ -1132,10 +1139,21 @@ object BiliApi {
                             ?: ""
 
                     val viewAtSec = it.optLong("view_at").takeIf { v -> v > 0 }
+                    val showTitle = it.optString("show_title", "").trim().takeIf { s -> s.isNotBlank() }
+                    val badge = it.optString("badge", "").trim().takeIf { s -> s.isNotBlank() }
+                    val subtitleParts = buildList {
+                        viewAtSec?.let { add(Format.timeText(it)) }
+                        badge?.let { add(it) }
+                        showTitle?.let { add(it) }
+                    }
+                    val subtitle = subtitleParts.joinToString(" · ").takeIf { s -> s.isNotBlank() }
                     out.add(
                         VideoCard(
                             bvid = bvid,
-                            cid = history.optLong("cid").takeIf { v -> v > 0 },
+                            cid = cid,
+                            aid = aid,
+                            epId = epId,
+                            business = businessType.takeIf { s -> s.isNotBlank() },
                             title = it.optString("title", ""),
                             coverUrl = coverUrl,
                             durationSec = it.optInt("duration", 0),
@@ -1147,7 +1165,7 @@ object BiliApi {
                             view = null,
                             danmaku = null,
                             pubDate = null,
-                            pubDateText = viewAtSec?.let { v -> Format.timeText(v) },
+                            pubDateText = subtitle,
                         ),
                     )
                 }
@@ -1748,6 +1766,15 @@ object BiliApi {
         return BiliClient.getJson(url)
     }
 
+    suspend fun view(aid: Long): JSONObject {
+        val safeAid = aid.takeIf { it > 0 } ?: error("aid required")
+        val url = BiliClient.withQuery(
+            "https://api.bilibili.com/x/web-interface/view",
+            mapOf("aid" to safeAid.toString()),
+        )
+        return BiliClient.getJson(url)
+    }
+
     suspend fun archiveRelated(bvid: String, aid: Long? = null): List<VideoCard> {
         val safeBvid = bvid.trim()
         val safeAid = aid?.takeIf { it > 0 }
@@ -1862,7 +1889,8 @@ object BiliApi {
     }
 
     suspend fun pgcPlayUrl(
-        bvid: String,
+        bvid: String? = null,
+        aid: Long? = null,
         cid: Long? = null,
         epId: Long? = null,
         qn: Int = 80,
@@ -1870,9 +1898,11 @@ object BiliApi {
     ): JSONObject {
         WebCookieMaintainer.ensureWebFingerprintCookies()
         WebCookieMaintainer.ensureDailyMaintenance()
+        val safeBvid = bvid?.trim().orEmpty()
+        val safeAid = aid?.takeIf { it > 0 }
+        if (safeBvid.isBlank() && safeAid == null) error("bvid or aid required")
         val params =
             mutableMapOf(
-                "bvid" to bvid,
                 "qn" to qn.toString(),
                 "fnver" to "0",
                 "fnval" to fnval.toString(),
@@ -1880,6 +1910,8 @@ object BiliApi {
                 "from_client" to "BROWSER",
                 "drm_tech_type" to "2",
             )
+        if (safeBvid.isNotBlank()) params["bvid"] = safeBvid
+        safeAid?.let { params["avid"] = it.toString() }
         BiliClient.cookies.getCookieValue("x-bili-gaia-vtoken")?.trim()?.takeIf { it.isNotBlank() }?.let {
             params["gaia_vtoken"] = it
         }
@@ -1908,7 +1940,8 @@ object BiliApi {
     }
 
     suspend fun pgcPlayUrlTryLook(
-        bvid: String,
+        bvid: String? = null,
+        aid: Long? = null,
         cid: Long? = null,
         epId: Long? = null,
         qn: Int = 80,
@@ -1916,9 +1949,11 @@ object BiliApi {
     ): JSONObject {
         WebCookieMaintainer.ensureWebFingerprintCookies()
         WebCookieMaintainer.ensureDailyMaintenance()
+        val safeBvid = bvid?.trim().orEmpty()
+        val safeAid = aid?.takeIf { it > 0 }
+        if (safeBvid.isBlank() && safeAid == null) error("bvid or aid required")
         val params =
             mutableMapOf(
-                "bvid" to bvid,
                 "qn" to qn.toString(),
                 "fnver" to "0",
                 "fnval" to fnval.toString(),
@@ -1927,6 +1962,8 @@ object BiliApi {
                 "drm_tech_type" to "2",
                 "try_look" to "1",
             )
+        if (safeBvid.isNotBlank()) params["bvid"] = safeBvid
+        safeAid?.let { params["avid"] = it.toString() }
         cid?.takeIf { it > 0 }?.let { params["cid"] = it.toString() }
         epId?.takeIf { it > 0 }?.let { params["ep_id"] = it.toString() }
 

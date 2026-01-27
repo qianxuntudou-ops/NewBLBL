@@ -138,6 +138,10 @@ class AppPrefs(context: Context) {
         get() = prefs.getBoolean(KEY_PLAYER_AUTO_SKIP_SEGMENTS_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_PLAYER_AUTO_SKIP_SEGMENTS_ENABLED, value).apply()
 
+    var playerOpenDetailBeforePlay: Boolean
+        get() = prefs.getBoolean(KEY_PLAYER_OPEN_DETAIL_BEFORE_PLAY, false)
+        set(value) = prefs.edit().putBoolean(KEY_PLAYER_OPEN_DETAIL_BEFORE_PLAY, value).apply()
+
     var fullscreenEnabled: Boolean
         get() = prefs.getBoolean(KEY_FULLSCREEN, true)
         set(value) = prefs.edit().putBoolean(KEY_FULLSCREEN, value).apply()
@@ -283,6 +287,7 @@ class AppPrefs(context: Context) {
         private const val KEY_PLAYER_SPEED = "player_speed"
         private const val KEY_PLAYER_AUTO_RESUME_ENABLED = "player_auto_resume_enabled"
         private const val KEY_PLAYER_AUTO_SKIP_SEGMENTS_ENABLED = "player_auto_skip_segments_enabled"
+        private const val KEY_PLAYER_OPEN_DETAIL_BEFORE_PLAY = "player_open_detail_before_play"
         private const val KEY_FULLSCREEN = "fullscreen_enabled"
         private const val KEY_PLAYER_DEBUG = "player_debug_enabled"
         private const val KEY_PLAYER_DOUBLE_BACK_ON_ENDED = "player_double_back_on_ended"

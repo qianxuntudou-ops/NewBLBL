@@ -46,6 +46,10 @@
             android:screenOrientation="sensorLandscape" />
 
         <activity
+            android:name=".feature.video.VideoDetailActivity"
+            android:screenOrientation="sensorLandscape" />
+
+        <activity
             android:name=".ui.MainActivity"
             android:banner="@drawable/tv_banner"
             android:exported="true"

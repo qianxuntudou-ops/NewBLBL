@@ -273,19 +273,20 @@ class PlayerActivity : BaseActivity() {
         trace =
             PlaybackTrace(
                 buildString {
-                    append(bvid.takeLast(8).ifBlank { "unknown" })
+                    val token = bvid.takeLast(8).ifBlank { aidExtra?.toString(16) ?: "unknown" }
+                    append(token)
                     append('-')
                     append((System.currentTimeMillis() and 0xFFFF).toString(16))
                 },
             ).also { it.log("activity:onCreate") }
-        if (bvid.isBlank()) {
-            Toast.makeText(this, "缺少 bvid", Toast.LENGTH_SHORT).show()
-            finish()
-            return
-        }
         currentBvid = bvid
         currentEpId = epIdExtra
         currentAid = aidExtra
+        if (currentBvid.isBlank() && currentAid == null) {
+            Toast.makeText(this, "缺少 bvid/aid", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
 
         val prefs = BiliClient.prefs
         session = PlayerSessionSettings(
@@ -1026,7 +1027,7 @@ class PlayerActivity : BaseActivity() {
     private fun playPlaylistIndex(index: Int) {
         val list = playlistItems
         val item = list.getOrNull(index) ?: return
-        if (item.bvid.isBlank()) return
+        if (item.bvid.isBlank() && (item.aid ?: 0L) <= 0L) return
 
         // Avoid pointless reload when list has only one item.
         if (index == playlistIndex) {
@@ -1115,15 +1116,16 @@ class PlayerActivity : BaseActivity() {
     }
 
     private fun startPlayback(
-        bvid: String,
+        bvid: String?,
         cidExtra: Long?,
         epIdExtra: Long?,
         aidExtra: Long?,
         initialTitle: String?,
     ) {
         val exo = player ?: return
-        val safeBvid = bvid.trim()
-        if (safeBvid.isBlank()) return
+        val safeBvid = bvid?.trim().orEmpty()
+        val safeAid = aidExtra?.takeIf { it > 0 }
+        if (safeBvid.isBlank() && safeAid == null) return
 
         cancelPendingAutoResume(reason = "new_media")
         autoResumeToken++
@@ -1150,13 +1152,14 @@ class PlayerActivity : BaseActivity() {
 
         currentBvid = safeBvid
         currentEpId = epIdExtra
-        currentAid = aidExtra
+        currentAid = safeAid
         currentCid = -1L
 
         trace =
             PlaybackTrace(
                 buildString {
-                    append(safeBvid.takeLast(8).ifBlank { "unknown" })
+                    val token = safeBvid.takeLast(8).ifBlank { safeAid?.toString(16) ?: "unknown" }
+                    append(token)
                     append('-')
                     append((System.currentTimeMillis() and 0xFFFF).toString(16))
                 },
@@ -1184,7 +1187,16 @@ class PlayerActivity : BaseActivity() {
         lifecycleScope.launch(handler) {
             try {
                 trace?.log("view:start")
-                val viewJson = async(Dispatchers.IO) { runCatching { BiliApi.view(safeBvid) }.getOrNull() }
+                val viewJson =
+                    async(Dispatchers.IO) {
+                        runCatching {
+                            if (safeBvid.isNotBlank()) {
+                                BiliApi.view(safeBvid)
+                            } else {
+                                BiliApi.view(safeAid ?: 0L)
+                            }
+                        }.getOrNull()
+                    }
                 val viewData = viewJson.await()?.optJSONObject("data") ?: JSONObject()
                 trace?.log("view:done")
                 val title = viewData.optString("title", "")
@@ -1193,19 +1205,24 @@ class PlayerActivity : BaseActivity() {
                 applyUpInfo(viewData)
                 applyTitleMeta(viewData)
 
+                val resolvedBvid =
+                    viewData.optString("bvid", "").trim().takeIf { it.isNotBlank() }
+                        ?: safeBvid
+                if (resolvedBvid.isNotBlank()) currentBvid = resolvedBvid
+
                 val cid = cidExtra ?: viewData.optLong("cid").takeIf { it > 0 } ?: error("cid missing")
                 val aid = viewData.optLong("aid").takeIf { it > 0 }
-                currentAid = currentAid ?: aid
+                currentAid = currentAid ?: aid ?: safeAid
                 currentCid = cid
-                AppLog.i("Player", "start bvid=$safeBvid cid=$cid")
+                AppLog.i("Player", "start bvid=$resolvedBvid cid=$cid")
                 trace?.log("cid:resolved", "cid=$cid aid=${aid ?: -1}")
 
                 playlistUgcSeasonId = null
                 playlistUgcSeasonTitle = null
-                maybeOverridePlaylistWithUgcSeason(viewData, bvid = safeBvid)
-                maybeOverridePlaylistWithMultiPage(viewData, bvid = safeBvid)
+                maybeOverridePlaylistWithUgcSeason(viewData, bvid = resolvedBvid)
+                maybeOverridePlaylistWithMultiPage(viewData, bvid = resolvedBvid)
 
-                requestOnlineWatchingText(bvid = safeBvid, cid = cid)
+                requestOnlineWatchingText(bvid = resolvedBvid, cid = cid)
 
                     val playJob =
                         async {
@@ -1215,7 +1232,8 @@ class PlayerActivity : BaseActivity() {
                             decodeFallbackAttempted = false
                             lastPickedDash = null
                             loadPlayableWithTryLookFallback(
-                                bvid = safeBvid,
+                                bvid = resolvedBvid,
+                                aid = currentAid,
                                 cid = cid,
                                 epId = currentEpId,
                                 qn = qn,
@@ -1232,7 +1250,7 @@ class PlayerActivity : BaseActivity() {
                     val subJob =
                         async(Dispatchers.IO) {
                             trace?.log("subtitle:start")
-                            prepareSubtitleConfig(viewData, safeBvid, cid, trace)
+                            prepareSubtitleConfig(viewData, resolvedBvid, cid, trace)
                                 .also { trace?.log("subtitle:done", "ok=${it != null}") }
                         }
 
@@ -1298,13 +1316,13 @@ class PlayerActivity : BaseActivity() {
                     updateSubtitleButton()
                     maybeScheduleAutoResume(
                         playJson = playJson,
-                        bvid = safeBvid,
+                        bvid = resolvedBvid,
                         cid = cid,
                         playbackToken = autoResumeToken,
                     )
                     maybeStartAutoSkipSegments(
                         playJson = playJson,
-                        bvid = safeBvid,
+                        bvid = resolvedBvid,
                         cid = cid,
                         playbackToken = autoSkipToken,
                     )
@@ -1363,29 +1381,44 @@ class PlayerActivity : BaseActivity() {
 
     private suspend fun requestPlayJson(
         bvid: String,
+        aid: Long?,
         cid: Long,
         epId: Long?,
         qn: Int,
         fnval: Int,
         tryLook: Boolean,
     ): JSONObject {
-        return try {
-            if (tryLook) {
-                BiliApi.playUrlDashTryLook(bvid = bvid, cid = cid, qn = qn, fnval = fnval)
+        val safeBvid = bvid.trim()
+        val safeAid = aid?.takeIf { it > 0 }
+        val safeEpId = epId?.takeIf { it > 0 }
+
+        if (safeEpId != null) {
+            return if (tryLook) {
+                BiliApi.pgcPlayUrlTryLook(
+                    bvid = safeBvid.takeIf { it.isNotBlank() },
+                    aid = safeAid,
+                    cid = cid,
+                    epId = safeEpId,
+                    qn = qn,
+                    fnval = fnval,
+                )
             } else {
-                BiliApi.playUrlDash(bvid = bvid, cid = cid, qn = qn, fnval = fnval)
+                BiliApi.pgcPlayUrl(
+                    bvid = safeBvid.takeIf { it.isNotBlank() },
+                    aid = safeAid,
+                    cid = cid,
+                    epId = safeEpId,
+                    qn = qn,
+                    fnval = fnval,
+                )
             }
-        } catch (t: Throwable) {
-            val e = t as? BiliApiException
-            if (e != null && epId != null && epId > 0 && (e.apiCode == -404 || e.apiCode == -400)) {
-                if (tryLook) {
-                    BiliApi.pgcPlayUrlTryLook(bvid = bvid, cid = cid, epId = epId, qn = qn, fnval = fnval)
-                } else {
-                    BiliApi.pgcPlayUrl(bvid = bvid, cid = cid, epId = epId, qn = qn, fnval = fnval)
-                }
-            } else {
-                throw t
-            }
+        }
+
+        if (safeBvid.isBlank()) error("bvid required")
+        return if (tryLook) {
+            BiliApi.playUrlDashTryLook(bvid = safeBvid, cid = cid, qn = qn, fnval = fnval)
+        } else {
+            BiliApi.playUrlDash(bvid = safeBvid, cid = cid, qn = qn, fnval = fnval)
         }
     }
 
@@ -1441,6 +1474,7 @@ class PlayerActivity : BaseActivity() {
 
     private suspend fun loadPlayableWithTryLookFallback(
         bvid: String,
+        aid: Long?,
         cid: Long,
         epId: Long?,
         qn: Int,
@@ -1451,6 +1485,7 @@ class PlayerActivity : BaseActivity() {
             try {
                 requestPlayJson(
                     bvid = bvid,
+                    aid = aid,
                     cid = cid,
                     epId = epId,
                     qn = qn,
@@ -1463,6 +1498,7 @@ class PlayerActivity : BaseActivity() {
                     val fallbackJson =
                         requestPlayJson(
                             bvid = bvid,
+                            aid = aid,
                             cid = cid,
                             epId = epId,
                             qn = qn,
@@ -1489,6 +1525,7 @@ class PlayerActivity : BaseActivity() {
             val fallbackJson =
                 requestPlayJson(
                     bvid = bvid,
+                    aid = aid,
                     cid = cid,
                     epId = epId,
                     qn = qn,
@@ -3236,6 +3273,7 @@ class PlayerActivity : BaseActivity() {
         val fallbackJson =
             requestPlayJson(
                 bvid = bvid,
+                aid = currentAid,
                 cid = cid,
                 epId = currentEpId,
                 qn = 127,
@@ -3371,6 +3409,7 @@ class PlayerActivity : BaseActivity() {
                 val (playJson, playable) =
                     loadPlayableWithTryLookFallback(
                         bvid = bvid,
+                        aid = currentAid,
                         cid = cid,
                         epId = currentEpId,
                         qn = qn,

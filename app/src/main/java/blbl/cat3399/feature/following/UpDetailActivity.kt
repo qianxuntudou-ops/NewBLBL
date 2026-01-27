@@ -27,6 +27,7 @@ import blbl.cat3399.feature.login.QrLoginActivity
 import blbl.cat3399.feature.player.PlayerActivity
 import blbl.cat3399.feature.player.PlayerPlaylistItem
 import blbl.cat3399.feature.player.PlayerPlaylistStore
+import blbl.cat3399.feature.video.VideoDetailActivity
 import blbl.cat3399.feature.video.VideoCardAdapter
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -96,13 +97,31 @@ class UpDetailActivity : BaseActivity() {
                             )
                         }
                     val token = PlayerPlaylistStore.put(items = playlistItems, index = pos, source = "UpDetail:$mid")
-                    startActivity(
-                        Intent(this, PlayerActivity::class.java)
-                            .putExtra(PlayerActivity.EXTRA_BVID, card.bvid)
-                            .putExtra(PlayerActivity.EXTRA_CID, card.cid ?: -1L)
-                            .putExtra(PlayerActivity.EXTRA_PLAYLIST_TOKEN, token)
-                            .putExtra(PlayerActivity.EXTRA_PLAYLIST_INDEX, pos),
-                    )
+                    if (BiliClient.prefs.playerOpenDetailBeforePlay) {
+                        startActivity(
+                            Intent(this, VideoDetailActivity::class.java)
+                                .putExtra(VideoDetailActivity.EXTRA_BVID, card.bvid)
+                                .putExtra(VideoDetailActivity.EXTRA_CID, card.cid ?: -1L)
+                                .apply { card.aid?.let { putExtra(VideoDetailActivity.EXTRA_AID, it) } }
+                                .putExtra(VideoDetailActivity.EXTRA_TITLE, card.title)
+                                .putExtra(VideoDetailActivity.EXTRA_COVER_URL, card.coverUrl)
+                                .apply {
+                                    card.ownerName.takeIf { it.isNotBlank() }?.let { putExtra(VideoDetailActivity.EXTRA_OWNER_NAME, it) }
+                                    card.ownerFace?.takeIf { it.isNotBlank() }?.let { putExtra(VideoDetailActivity.EXTRA_OWNER_AVATAR, it) }
+                                    card.ownerMid?.takeIf { it > 0L }?.let { putExtra(VideoDetailActivity.EXTRA_OWNER_MID, it) }
+                                }
+                                .putExtra(VideoDetailActivity.EXTRA_PLAYLIST_TOKEN, token)
+                                .putExtra(VideoDetailActivity.EXTRA_PLAYLIST_INDEX, pos),
+                        )
+                    } else {
+                        startActivity(
+                            Intent(this, PlayerActivity::class.java)
+                                .putExtra(PlayerActivity.EXTRA_BVID, card.bvid)
+                                .putExtra(PlayerActivity.EXTRA_CID, card.cid ?: -1L)
+                                .putExtra(PlayerActivity.EXTRA_PLAYLIST_TOKEN, token)
+                                .putExtra(PlayerActivity.EXTRA_PLAYLIST_INDEX, pos),
+                        )
+                    }
                 },
             )
         binding.recycler.setHasFixedSize(true)
