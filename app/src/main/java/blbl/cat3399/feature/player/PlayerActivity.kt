@@ -129,6 +129,7 @@ class PlayerActivity : BaseActivity() {
     private var tapSeekActiveUntilMs: Long = 0L
     private var riskControlBypassHintShown: Boolean = false
     private var seekOsdToken: Long = 0L
+    private var transientSeekOsdVisible: Boolean = false
     private var bottomBarFullConstraints: ConstraintSet? = null
     private var bottomBarSeekConstraints: ConstraintSet? = null
 
@@ -1805,10 +1806,11 @@ class PlayerActivity : BaseActivity() {
             KeyEvent.KEYCODE_MEDIA_REWIND,
             -> {
                 if (binding.settingsPanel.visibility == View.VISIBLE) return super.dispatchKeyEvent(event)
-                if (binding.seekProgress.isFocused) return super.dispatchKeyEvent(event)
-                if (binding.topBar.hasFocus() || binding.bottomBar.hasFocus()) return super.dispatchKeyEvent(event)
+                if (osdMode == OsdMode.Full && binding.seekProgress.isFocused) return super.dispatchKeyEvent(event)
+                if (osdMode == OsdMode.Full && (binding.topBar.hasFocus() || binding.bottomBar.hasFocus())) return super.dispatchKeyEvent(event)
 
                 if (event.repeatCount > 0) {
+                    showSeekOsd()
                     startHoldSeek(direction = -1, showControls = false)
                     return true
                 }
@@ -1822,10 +1824,11 @@ class PlayerActivity : BaseActivity() {
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
             -> {
                 if (binding.settingsPanel.visibility == View.VISIBLE) return super.dispatchKeyEvent(event)
-                if (binding.seekProgress.isFocused) return super.dispatchKeyEvent(event)
-                if (binding.topBar.hasFocus() || binding.bottomBar.hasFocus()) return super.dispatchKeyEvent(event)
+                if (osdMode == OsdMode.Full && binding.seekProgress.isFocused) return super.dispatchKeyEvent(event)
+                if (osdMode == OsdMode.Full && (binding.topBar.hasFocus() || binding.bottomBar.hasFocus())) return super.dispatchKeyEvent(event)
 
                 if (event.repeatCount > 0) {
+                    showSeekOsd()
                     startHoldSeek(direction = +1, showControls = false)
                     return true
                 }
@@ -2135,6 +2138,7 @@ class PlayerActivity : BaseActivity() {
         seekOsdHideJob?.cancel()
         seekOsdHideJob = null
         seekOsdToken = 0L
+        transientSeekOsdVisible = false
         osdMode = if (show) OsdMode.Full else OsdMode.Hidden
 
         binding.controlsRow.visibility = if (show) View.VISIBLE else View.GONE
@@ -2154,12 +2158,29 @@ class PlayerActivity : BaseActivity() {
             return
         }
 
-        osdMode = OsdMode.SeekTransient
-        binding.topBar.visibility = View.GONE
-        applyBottomBarSeekLayout()
-        binding.controlsRow.visibility = View.GONE
-        binding.tvTime.visibility = View.VISIBLE
-        binding.bottomBar.visibility = View.VISIBLE
+        player?.let { exo ->
+            val duration = exo.duration.takeIf { it > 0 } ?: 0L
+            val pos = exo.currentPosition.coerceAtLeast(0L)
+            binding.tvSeekOsdTime.text = "${formatHms(pos)} / ${formatHms(duration)}"
+
+            val enabled = duration > 0L
+            binding.progressSeekOsd.isEnabled = enabled
+            if (enabled) {
+                val bufPos = exo.bufferedPosition.coerceAtLeast(0L)
+                val bufferedProgress =
+                    ((bufPos.toDouble() / duration.toDouble()) * SEEK_MAX)
+                        .toInt()
+                        .coerceIn(0, SEEK_MAX)
+                val pNow = ((pos.toDouble() / duration.toDouble()) * SEEK_MAX).toInt().coerceIn(0, SEEK_MAX)
+                binding.progressSeekOsd.secondaryProgress = bufferedProgress
+                binding.progressSeekOsd.progress = pNow
+            } else {
+                binding.progressSeekOsd.secondaryProgress = 0
+                binding.progressSeekOsd.progress = 0
+            }
+        }
+
+        transientSeekOsdVisible = true
         updatePersistentBottomProgressBarVisibility()
         scheduleHideSeekOsd()
     }
@@ -2209,9 +2230,7 @@ class PlayerActivity : BaseActivity() {
             lifecycleScope.launch {
                 delay(SEEK_OSD_HIDE_DELAY_MS)
                 if (seekOsdToken != token) return@launch
-                if (osdMode != OsdMode.SeekTransient) return@launch
-                osdMode = OsdMode.Hidden
-                binding.bottomBar.visibility = View.GONE
+                transientSeekOsdVisible = false
                 updatePersistentBottomProgressBarVisibility()
             }
     }
@@ -2219,8 +2238,11 @@ class PlayerActivity : BaseActivity() {
     private fun updatePersistentBottomProgressBarVisibility() {
         val enabled = BiliClient.prefs.playerPersistentBottomProgressEnabled
         val showControls = osdMode != OsdMode.Hidden || binding.settingsPanel.visibility == View.VISIBLE
-        val v = if (enabled && !showControls) View.VISIBLE else View.GONE
-        if (binding.progressPersistentBottom.visibility != v) binding.progressPersistentBottom.visibility = v
+        val persistentV = if (enabled && !showControls && !transientSeekOsdVisible) View.VISIBLE else View.GONE
+        if (binding.progressPersistentBottom.visibility != persistentV) binding.progressPersistentBottom.visibility = persistentV
+
+        val seekOsdV = if (!showControls && transientSeekOsdVisible) View.VISIBLE else View.GONE
+        if (binding.seekOsdContainer.visibility != seekOsdV) binding.seekOsdContainer.visibility = seekOsdV
     }
 
     private fun restartAutoHideTimer() {
@@ -2660,11 +2682,13 @@ class PlayerActivity : BaseActivity() {
 
         if (!scrubbing) {
             binding.tvTime.text = "${formatHms(pos)} / ${formatHms(duration)}"
+            binding.tvSeekOsdTime.text = "${formatHms(pos)} / ${formatHms(duration)}"
         }
 
         val enabled = duration > 0
         binding.seekProgress.isEnabled = enabled
         binding.progressPersistentBottom.isEnabled = enabled
+        binding.progressSeekOsd.isEnabled = enabled
         if (enabled) {
             val bufferedProgress =
                 ((bufPos.toDouble() / duration.toDouble()) * SEEK_MAX)
@@ -2672,6 +2696,7 @@ class PlayerActivity : BaseActivity() {
                     .coerceIn(0, SEEK_MAX)
             binding.seekProgress.secondaryProgress = bufferedProgress
             binding.progressPersistentBottom.secondaryProgress = bufferedProgress
+            binding.progressSeekOsd.secondaryProgress = bufferedProgress
 
             if (!scrubbing) {
                 val p = ((pos.toDouble() / duration.toDouble()) * SEEK_MAX).toInt().coerceIn(0, SEEK_MAX)
@@ -2679,10 +2704,13 @@ class PlayerActivity : BaseActivity() {
             }
             val pNow = ((pos.toDouble() / duration.toDouble()) * SEEK_MAX).toInt().coerceIn(0, SEEK_MAX)
             binding.progressPersistentBottom.progress = pNow
+            binding.progressSeekOsd.progress = pNow
         } else {
             binding.seekProgress.secondaryProgress = 0
             binding.progressPersistentBottom.secondaryProgress = 0
             binding.progressPersistentBottom.progress = 0
+            binding.progressSeekOsd.secondaryProgress = 0
+            binding.progressSeekOsd.progress = 0
         }
         requestDanmakuSegmentsForPosition(pos, immediate = false)
         val markerDurationMs = exo.duration.takeIf { it > 0 } ?: currentViewDurationMs ?: 0L
@@ -2773,6 +2801,7 @@ class PlayerActivity : BaseActivity() {
             if (autoSkipMarkersShown) {
                 binding.seekProgress.clearSegments()
                 binding.progressPersistentBottom.clearSegments()
+                binding.progressSeekOsd.clearSegments()
                 autoSkipMarkersShown = false
             }
             autoSkipMarkersDirty = false
@@ -2798,6 +2827,7 @@ class PlayerActivity : BaseActivity() {
             }
         binding.seekProgress.setSegments(marks)
         binding.progressPersistentBottom.setSegments(marks)
+        binding.progressSeekOsd.setSegments(marks)
         autoSkipMarkersShown = marks.isNotEmpty()
     }
 
@@ -4762,6 +4792,14 @@ class PlayerActivity : BaseActivity() {
                 bottomPadV,
             )
         }
+        if (binding.seekOsdContainer.paddingTop != bottomPadV || binding.seekOsdContainer.paddingBottom != bottomPadV) {
+            binding.seekOsdContainer.setPadding(
+                binding.seekOsdContainer.paddingLeft,
+                bottomPadV,
+                binding.seekOsdContainer.paddingRight,
+                bottomPadV,
+            )
+        }
 
         (binding.seekProgress.layoutParams as? MarginLayoutParams)?.let { lp ->
             val height = scaledPx(R.dimen.player_seekbar_touch_height_tv).coerceAtLeast(1)
@@ -4795,6 +4833,22 @@ class PlayerActivity : BaseActivity() {
             binding.progressPersistentBottom.progressDrawable = ContextCompat.getDrawable(this, R.drawable.progress_player_persistent)
         }
 
+        (binding.progressSeekOsd.layoutParams as? MarginLayoutParams)?.let { lp ->
+            val height = scaledPx(R.dimen.player_seek_osd_progress_height).coerceAtLeast(1)
+            val mh = scaledPx(R.dimen.player_seek_osd_margin_h)
+            val mb = scaledPx(R.dimen.player_seek_osd_time_margin_bottom)
+            if (lp.height != height || lp.marginStart != mh || lp.marginEnd != mh || lp.bottomMargin != mb) {
+                lp.height = height
+                lp.marginStart = mh
+                lp.marginEnd = mh
+                lp.bottomMargin = mb
+                binding.progressSeekOsd.layoutParams = lp
+            }
+        }
+        run {
+            binding.progressSeekOsd.progressDrawable = ContextCompat.getDrawable(this, R.drawable.progress_player_seek_osd)
+        }
+
         (binding.controlsRow.layoutParams as? MarginLayoutParams)?.let { lp ->
             val height = scaledPx(R.dimen.player_controls_row_height_tv).coerceAtLeast(1)
             val ms = scaledPx(R.dimen.player_controls_row_margin_start_tv)
@@ -4820,6 +4874,20 @@ class PlayerActivity : BaseActivity() {
             if (lp.marginEnd != me) {
                 lp.marginEnd = me
                 binding.tvTime.layoutParams = lp
+            }
+        }
+
+        binding.tvSeekOsdTime.setTextSize(
+            TypedValue.COMPLEX_UNIT_PX,
+            scaledPxF(R.dimen.player_time_text_size_tv),
+        )
+        (binding.tvSeekOsdTime.layoutParams as? MarginLayoutParams)?.let { lp ->
+            val me = scaledPx(R.dimen.player_seek_osd_margin_h)
+            val mb = scaledPx(R.dimen.player_seek_osd_margin_bottom)
+            if (lp.marginEnd != me || lp.bottomMargin != mb) {
+                lp.marginEnd = me
+                lp.bottomMargin = mb
+                binding.tvSeekOsdTime.layoutParams = lp
             }
         }
 

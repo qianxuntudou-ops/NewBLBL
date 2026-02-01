@@ -400,6 +400,66 @@
         app:layout_constraintEnd_toEndOf="@id/player_view"
         app:layout_constraintStart_toStartOf="@id/player_view" />
 
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/seek_osd_container"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_player_controls"
+        android:clickable="false"
+        android:focusable="false"
+        android:importantForAccessibility="no"
+        android:paddingTop="@dimen/player_bottom_bar_padding_v"
+        android:paddingBottom="@dimen/player_bottom_bar_padding_v"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/player_view"
+        app:layout_constraintEnd_toEndOf="@id/player_view"
+        app:layout_constraintStart_toStartOf="@id/player_view">
+
+        <blbl.cat3399.feature.player.SegmentedProgressBar
+            android:id="@+id/progress_seek_osd"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="0dp"
+            android:layout_height="@dimen/player_seek_osd_progress_height"
+            android:layout_marginStart="@dimen/player_seek_osd_margin_h"
+            android:layout_marginEnd="@dimen/player_seek_osd_margin_h"
+            android:layout_marginBottom="@dimen/player_seek_osd_time_margin_bottom"
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            android:indeterminate="false"
+            android:max="10000"
+            android:progress="0"
+            android:progressDrawable="@drawable/progress_player_seek_osd"
+            android:secondaryProgress="0"
+            app:layout_constraintBottom_toTopOf="@id/tv_seek_osd_time"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <TextView
+            android:id="@+id/tv_seek_osd_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="@dimen/player_seek_osd_margin_h"
+            android:layout_marginBottom="@dimen/player_seek_osd_margin_bottom"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/blbl_text"
+            android:textSize="@dimen/player_time_text_size"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/progress_seek_osd" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <androidx.constraintlayout.widget.Barrier
+        android:id="@+id/barrier_player_bottom_overlay_top"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:barrierAllowsGoneWidgets="true"
+        app:barrierDirection="top"
+        app:constraint_referenced_ids="bottom_bar,seek_osd_container" />
+
     <TextView
         android:id="@+id/tv_debug"
         android:layout_width="0dp"
@@ -428,7 +488,7 @@
         android:textColor="@color/blbl_text"
         android:textSize="@dimen/player_seek_hint_text_size"
         android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/bottom_bar"
+        app:layout_constraintBottom_toTopOf="@id/barrier_player_bottom_overlay_top"
         app:layout_constraintStart_toStartOf="@id/player_view" />
 
     <FrameLayout

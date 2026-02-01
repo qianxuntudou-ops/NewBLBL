@@ -222,6 +222,11 @@
     <dimen name="player_seekbar_track_height">5dp</dimen>
     <dimen name="player_seekbar_corner_radius">2.5dp</dimen>
     <dimen name="player_persistent_progress_height">2dp</dimen>
+    <dimen name="player_seek_osd_progress_height">8dp</dimen>
+    <dimen name="player_seek_osd_corner_radius">4dp</dimen>
+    <dimen name="player_seek_osd_margin_h">22dp</dimen>
+    <dimen name="player_seek_osd_time_margin_bottom">6dp</dimen>
+    <dimen name="player_seek_osd_margin_bottom">12dp</dimen>
     <!-- With expanded SeekBar touch height, reduce bottom margin so visual gap stays the same. -->
     <dimen name="player_seekbar_margin_bottom">2.5dp</dimen>
     <dimen name="player_seekbar_margin_bottom_tv">6.5dp</dimen>
